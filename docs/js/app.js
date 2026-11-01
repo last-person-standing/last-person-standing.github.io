@@ -78,4 +78,4 @@ function renderHeader(profile) {
 
 // Show the app name wherever a page has data-game-name
 document.querySelectorAll("[data-game-name]").forEach((el) => (el.textContent = GAME_NAME));
-document.title = document.title.replace("{game}", GAME_NAME);
+document.title = document.title.replace(/ · .*$/, ` · ${GAME_NAME}`);
