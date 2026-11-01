@@ -107,6 +107,7 @@ const ui = {
   start: { name: "", deadline: "", def: "" },
   end: { gameId: null, ticks: new Set(), note: "", touched: false },
   startResult: null,
+  chase: { init: false, stale: false, enabled: true, slots: [], subject: "", body: "", target: "body", result: null, setup: "" },
   pq: "", pf: "all", cq: "",
   sheet: null,     // { kind: "player" | "club", id }
   opener: null,    // selector of the control that opened the detail panel
@@ -178,7 +179,7 @@ function focusKey(el) {
   const q = (v) => String(v).replace(/"/g, '\\"');
   if (el.id) return `#${CSS.escape(el.id)}`;
   if (el.dataset.act) {
-    return `[data-act="${q(el.dataset.act)}"]` + ["id", "result", "lg", "f", "n", "role"]
+    return `[data-act="${q(el.dataset.act)}"]` + ["id", "result", "lg", "f", "n", "role", "i"]
       .filter((k) => el.dataset[k] != null).map((k) => `[data-${k}="${q(el.dataset[k])}"]`).join("");
   }
   if (el.type === "radio" && el.name) return `input[name="${q(el.name)}"][value="${q(el.value)}"]`;
@@ -305,16 +306,18 @@ async function act(btn, fn, okText, { light = false } = {}) {
 const must = (r) => { if (r.error) throw r.error; return r.data; };
 
 async function load() {
-  const [st, settings, profiles, teams, games, wins] = await Promise.all([
+  const [st, settings, profiles, teams, games, wins, mail] = await Promise.all([
     sb.rpc("my_game_state"),   // only used for the server clock
     sb.from("app_settings").select("*").single(),
     sb.from("profiles").select("id,display_name,email,role,credit,player_no").order("display_name"),
     sb.from("teams").select("id,name,short_name,league,colour1,colour2,active").order("name"),
     sb.from("games").select("id,name,status,started_at,ended_at,winner_note").order("started_at", { ascending: false }),
     sb.from("game_entries").select("game_id,player_id").eq("status", "winner"),
+    sb.from("email_settings").select("*").eq("id", 1).single(),
   ]);
   if (st.data && st.data.now) D.offset = Date.parse(st.data.now) - Date.now();
   D.settings = settings.data || {};
+  D.email = mail.error ? null : mail.data;
   D.warn = settings.error ? "Couldn't load the payment details, so bank references may be wrong. Tap Refresh to try again." : "";
   D.profiles = must(profiles);
   D.teams = must(teams);
@@ -323,7 +326,7 @@ async function load() {
   for (const w of must(wins)) (D.winners.get(w.game_id) || D.winners.set(w.game_id, []).get(w.game_id)).push(w.player_id);
 
   D.active = D.games.find((g) => g.status === "active") || null;
-  D.gws = []; D.entries = []; D.picks = []; D.allowed = new Set(); D.cur = null;
+  D.gws = []; D.entries = []; D.picks = []; D.allowed = new Set(); D.cur = null; D.emailLog = { slots: [], recent_players: 0 };
   if (D.active) {
     D.gws = must(await sb.from("gameweeks").select("id,game_id,number,mode,deadline,status")
       .eq("game_id", D.active.id).order("number"));
@@ -336,6 +339,10 @@ async function load() {
     D.entries = must(en);
     D.picks = must(pk);
     D.allowed = new Set(must(gt).map((r) => r.team_id));
+    if (D.cur) {
+      const log = await sb.rpc("email_log_summary");
+      D.emailLog = log.error || !log.data ? null : log.data;   // { slots, recent_players }; null = couldn't load
+    }
   }
   index();
   lastLoad = Date.now();
@@ -470,10 +477,12 @@ $(".tabs").addEventListener("keydown", (e) => {
 function renderAll() {
   say($("#warn"), D.warn, D.warn ? "error" : "");
   syncForms();
+  syncChase();
   renderWeek();
   renderPlayers();
   renderGame();
   renderClubs();
+  renderChase();
   renderSheet();
 }
 
@@ -1119,6 +1128,242 @@ function clubForm(t) {
     </form>`;
 }
 
+/* ----- Settings: chase emails ----- */
+
+const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const DEFAULT_SLOTS = [{ day: 3, hour: 9 }, { day: 4, hour: 9 }, { day: 5, hour: 9 }];
+const PLACEHOLDERS = ["{name}", "{deadline}", "{gameweek}", "{link}"];
+const fmtHour = (h) => `${h % 12 || 12}${h < 12 ? "am" : "pm"}`;
+const slotKey = (s) => `${s.day}-${s.hour}`;
+const sortSlots = (list) => list.slice().sort((a, b) => a.day - b.day || a.hour - b.hour);
+const slotTime = (s) => `${DAYS[s.day - 1]} ${fmtHour(s.hour)}`;
+const pickLink = () => pageUrl("pick.html");
+const cleanSlots = (list) => (Array.isArray(list) ? list : []).map((s) => ({ day: Number(s.day), hour: Number(s.hour) }));
+
+// Start the form from what's saved; keep unsaved edits across refreshes
+function syncChase() {
+  const c = ui.chase;
+  if (!D.email || (c.init && !c.stale)) return;
+  const saved = cleanSlots(D.email.send_slots);
+  Object.assign(c, { init: true, stale: false, enabled: !!D.email.enabled, subject: D.email.subject || "", body: D.email.body || "",
+    slots: sortSlots(saved.length ? saved : DEFAULT_SLOTS) });
+}
+function chaseDirty() {
+  const c = ui.chase, e = D.email;
+  return !!e && (c.enabled !== !!e.enabled || c.subject !== (e.subject || "") || c.body !== (e.body || "")
+    || JSON.stringify(sortSlots(c.slots)) !== JSON.stringify(sortSlots(cleanSlots(e.send_slots))));
+}
+
+// Players who would get a chase right now: still in, no pick, open week that isn't a week off
+function chaseTargets() {
+  if (!D.active || !D.cur) return { n: 0, why: "No game is running." };
+  if (D.cur.mode === "off") return { n: 0, why: "This gameweek is a Week off." };
+  if (phase() !== "before") return { n: 0, why: "Picks have locked for this gameweek." };
+  const n = aliveEntries().filter((e) => { const pk = D.pkBy.get(e.player_id); return !(pk && pk.team_id != null); }).length;
+  return { n, why: n ? "" : "Everyone still in has picked." };
+}
+
+// Replace {name} etc. with sample values for the preview
+function fillSample(text) {
+  const open = D.cur && D.cur.status === "open";
+  const deadline = fmtDeadline(open ? D.cur.deadline : ukLocalToIso(nextFridayLocal(nowMs())));
+  const vals = { "{name}": me.display_name, "{deadline}": deadline, "{gameweek}": String(D.cur ? D.cur.number : 1), "{link}": pickLink() };
+  return text.replace(/\{(name|deadline|gameweek|link)\}/g, (m) => vals[m]);
+}
+function previewHtml() {
+  const c = ui.chase;
+  return `<p class="pv-subject">${escapeHtml(fillSample(c.subject)) || '<span class="muted">(no subject)</span>'}</p>
+    <div class="pv-body">${escapeHtml(fillSample(c.body)) || '<span class="muted">(empty)</span>'}</div>`;
+}
+function updateDirty() { const el = $("#ch-dirty"); if (el) el.hidden = !chaseDirty(); }
+function updatePreview() { const el = $("#ch-preview"); if (el) el.innerHTML = previewHtml(); updateDirty(); }
+
+// Notes about send times that can never fire (the usual deadline is Friday 5pm)
+function slotNotesHtml() {
+  return ui.chase.slots.filter((s) => s.day > 5 || (s.day === 5 && s.hour >= 17))
+    .map((s) => `<p class="note-warn">${escapeHtml(slotTime(s))} is after the usual 5pm Friday deadline, so nothing will send.</p>`).join("");
+}
+
+// Checks on the link saved in the database (what the emails will actually use)
+function linkWarnings() {
+  const saved = String((D.email && D.email.pick_url) || "").trim();
+  const note = (t) => `<p class="note-warn">${escapeHtml(t)}</p>`;
+  if (!saved) return note("No link saved yet. Tap Save. Emails won't send until you do.");
+  let out = "";
+  if (/^http:\/\/(localhost|127\.)/i.test(saved)) out += note("Emails currently link to your PC (fine for testing). After the site is live, open Host \u2192 Settings there and tap Save.");
+  if (saved !== pickLink()) out += note("Saved link differs from this site. Tap Save to update.");
+  return out;
+}
+
+// "Wed 4 Nov, 9am" or "Sent now, Thu 5 Nov 2pm"
+const slotDayFmt = new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", weekday: "short", day: "numeric", month: "short" });
+function slotLabel(slot) {
+  const m = /^(manual )?(\d{4})-(\d\d)-(\d\d) (\d\d)$/.exec(slot);
+  if (!m) return slot;
+  const p = Object.fromEntries(slotDayFmt.formatToParts(new Date(Date.UTC(+m[2], +m[3] - 1, +m[4]))).map((x) => [x.type, x.value]));
+  const when = `${p.weekday} ${p.day} ${p.month}`;
+  return m[1] ? `Sent now, ${when} ${fmtHour(+m[5])}` : `${when}, ${fmtHour(+m[5])}`;
+}
+function recentHtml() {
+  if (!D.cur) return `<p class="muted">No gameweek is open, so there are no sends to show.</p>`;
+  if (!D.emailLog) return `<p class="msg error">Couldn't load the send history.</p>`;
+  const rows = Array.isArray(D.emailLog.slots) ? D.emailLog.slots : [];   // newest first, from the server
+  if (!rows.length) return `<p class="muted">Nothing sent yet for Gameweek ${D.cur.number}.</p>`;
+  return `<ul class="sends">${rows.map((r) => `<li>${escapeHtml(slotLabel(String(r.slot)))}: <strong>${plural(Number(r.count) || 0, "email")}</strong></li>`).join("")}</ul>`;
+}
+
+function renderChase() {
+  const el = $("#chase");
+  if (!el) return;
+  const c = ui.chase;
+  if (!D.email) {
+    el.innerHTML = `<h2 id="ch-title">Chase emails</h2>
+      <p class="msg error">Couldn't load the chase email settings. Tap Refresh on the This week tab to try again.</p>`;
+    return;
+  }
+  const t = chaseTargets();
+  const setup = c.setup ? `<p class="msg error">${escapeHtml(c.setup)}${/stage-5-setup/.test(c.setup) ? "" : " See guides/stage-5-setup.md."}</p>` : "";
+  const rows = c.slots.map((s, i) => `
+    <div class="slot-row">
+      <label>Day
+        <select id="ch-day-${i}" data-slot="${i}" data-k="day">${DAYS.map((d, k) => `<option value="${k + 1}"${s.day === k + 1 ? " selected" : ""}>${d}</option>`).join("")}</select>
+      </label>
+      <label>Time (UK)
+        <select id="ch-hr-${i}" data-slot="${i}" data-k="hour">${Array.from({ length: 24 }, (_, h) => `<option value="${h}"${s.hour === h ? " selected" : ""}>${fmtHour(h)}</option>`).join("")}</select>
+      </label>
+      <button type="button" class="secondary" data-act="ch-del" data-i="${i}" aria-label="Remove ${escapeHtml(slotTime(s))}">Remove</button>
+    </div>`).join("");
+  const res = c.result ? `<p class="msg ${c.result.type}">${c.result.stopped ? `<strong>Stopped early: ${escapeHtml(c.result.stopped)}</strong><br>` : ""}${escapeHtml(c.result.text)}</p>` : "";
+
+  el.innerHTML = `
+    <h2 id="ch-title">Chase emails</h2>
+    <label class="chk"><input type="checkbox" id="ch-enabled"${c.enabled ? " checked" : ""}><span>Send chase emails</span></label>
+    <p class="muted small">Only to players still in who haven't picked. Never in a Week off.</p>
+
+    <h3>Send times <span class="muted small">(UK time)</span></h3>
+    ${rows || `<p class="muted">No times set. Saving will use the defaults: Wednesday, Thursday and Friday at 9am.</p>`}
+    <div id="ch-slotnotes">${slotNotesHtml()}</div>
+    <button type="button" class="secondary full" data-act="ch-add">Add a time</button>
+
+    <h3>The email</h3>
+    <label>Subject
+      <input type="text" id="ch-subject" maxlength="200" autocomplete="off" value="${escapeHtml(c.subject)}">
+    </label>
+    <p class="muted small" id="ch-ph-help">Tap to add to the subject or message, wherever you last typed:</p>
+    <div class="chips" role="group" aria-labelledby="ch-ph-help">
+      ${PLACEHOLDERS.map((p) => `<button type="button" class="chip" data-act="ch-ph" data-ph="${escapeHtml(p)}">${escapeHtml(p)}</button>`).join("")}
+    </div>
+    <label>Message
+      <textarea id="ch-body" rows="8" maxlength="4000">${escapeHtml(c.body)}</textarea>
+    </label>
+    <h3>Preview</h3>
+    <div class="preview" id="ch-preview">${previewHtml()}</div>
+    <p class="muted small">Pick link in the emails (set automatically when you save):</p>
+    <p class="linktext">${escapeHtml(pickLink())}</p>
+    ${linkWarnings()}
+
+    <p class="note-warn" id="ch-dirty"${chaseDirty() ? "" : " hidden"}>You have unsaved changes. Test and chase emails use the saved version.</p>
+    <button type="button" class="go full" data-act="ch-save">Save</button>
+
+    <h3>Send now</h3>
+    ${setup}
+    <button type="button" class="secondary full" data-act="ch-test">Send me a test email</button>
+    <p class="muted small">Sends one sample to ${escapeHtml(me.email)}.</p>
+    <button type="button" class="go full" data-act="ch-now"${t.n ? "" : " disabled"}>Send chase now${t.n ? ` (${t.n})` : ""}</button>
+    <p class="muted small">${t.n ? `${plural(t.n, "player")} still in ${t.n === 1 ? "hasn't" : "haven't"} picked.` : escapeHtml(`Not available: ${t.why}`)}</p>
+    <div id="ch-result" role="status">${res}</div>
+
+    <h3>Recent sends${D.cur ? ` <span class="muted small">(Gameweek ${D.cur.number})</span>` : ""}</h3>
+    ${recentHtml()}`;
+}
+
+// Call the chase-emails function. Throws a plain sentence. If the server answered, it's a definite
+// failure; if we never heard back, say the email may have gone out so nobody retries blindly.
+async function chaseCall(mode) {
+  let r;
+  try { r = await sb.functions.invoke("chase-emails", { body: { mode } }); }
+  catch { r = { error: { name: "FunctionsFetchError" } }; }
+  const fail = (msg) => Object.assign(new Error(msg), { setup: /email isn.t set up/i.test(msg) });
+  if (r.error) {
+    const answered = r.error.name === "FunctionsHttpError" || !!(r.error.context && typeof r.error.context.json === "function");
+    let msg = "";
+    try { msg = (await r.error.context.json()).error || ""; } catch {}
+    const status = r.error.context && r.error.context.status;
+    const setup = /email isn.t set up/i.test(msg);
+    if (mode === "now" && answered && status >= 500 && !setup) {
+      throw fail("Something went wrong part-way. Some emails may have been sent. It's safe to try again: nobody is emailed twice within an hour.");
+    }
+    if (msg) throw fail(msg);
+    if (answered) throw fail("The email service reported a problem. Check Recent sends to see whether anything went out before trying again.");
+    throw fail(mode === "now"
+      ? "We couldn't confirm what happened. Some emails may have been sent. Check Recent sends before trying again."
+      : "We couldn't confirm what happened. The test email may not have been sent.");
+  }
+  if (r.data && r.data.error) throw fail(String(r.data.error));
+  return r.data || {};
+}
+
+async function runChase(btn, mode) {
+  const done = await act(btn, async () => {
+    try {
+      const r = await chaseCall(mode);
+      ui.chase.setup = "";
+      if (mode === "test") ui.chase.result = { text: `Test email sent to ${r.to || me.email}.`, type: "ok" };
+      else if (r.skipped) ui.chase.result = { text: `Nothing was sent: ${String(r.skipped).replace(/[.]$/, "")}.`, type: "ok" };
+      else {
+        const failed = Number(r.failed) || 0, skippedRecent = Number(r.skipped_recent) || 0;
+        const errs = Array.isArray(r.errors) ? r.errors.slice(0, 5).map(String) : [];
+        const stopped = r.stopped ? (r.stopped === true ? "Brevo refused the emails or it ran out of time." : String(r.stopped)) : "";
+        ui.chase.result = { type: failed || stopped || r.ok === false ? "error" : "ok", stopped,
+          text: `Sent ${plural(Number(r.sent) || 0, "email")}.`
+            + (skippedRecent ? ` ${skippedRecent} skipped: already emailed in the last hour.` : "")
+            + (failed ? ` ${failed} failed${errs.length ? `: ${errs.join("; ")}` : ""}.` : "") };
+      }
+      return r;
+    } catch (e) {
+      if (e.setup) ui.chase.setup = e.message; else ui.chase.result = { text: e.message, type: "error" };
+      renderChase();
+      throw e;
+    }
+  }, () => (ui.chase.result.type === "ok" ? ui.chase.result.text : null));
+  // Some emails failed: say so in the error style too (the action itself went through)
+  if (done && ui.chase.result && ui.chase.result.type === "error") {
+    flash(`${ui.chase.result.stopped ? `Stopped early: ${ui.chase.result.stopped} ` : ""}${ui.chase.result.text}`, "error");
+  }
+  return done;
+}
+
+async function saveChase(btn) {
+  const c = ui.chase;
+  const subject = c.subject.trim(), body = c.body.trim();
+  if (!subject) return flash("Enter a subject for the email.", "error");
+  if (!body) return flash("Enter the message for the email.", "error");
+  const slots = c.slots.length ? c.slots : DEFAULT_SLOTS;
+  const seen = new Set();
+  for (const s of slots) {
+    if (!Number.isInteger(s.day) || s.day < 1 || s.day > 7 || !Number.isInteger(s.hour) || s.hour < 0 || s.hour > 23) return flash("One of the send times isn't valid.", "error");
+    if (seen.has(slotKey(s))) return flash(`${slotTime(s)} is in the list twice.`, "error");
+    seen.add(slotKey(s));
+  }
+  await act(btn, async () => {
+    await write(sb.from("email_settings").update({ enabled: c.enabled, send_slots: sortSlots(slots), subject, body, pick_url: pickLink() })
+      .eq("id", 1).select("id"));
+    c.stale = true;
+  }, "Chase email settings saved.");
+}
+
+async function chaseNow(btn) {
+  const t = chaseTargets();
+  if (!t.n) return flash(t.why || "Nobody to chase.", "error");
+  const yes = await ask({
+    title: `Email ${plural(t.n, "player")} now?`,
+    body: `<p>Each player still in who hasn't picked gets the saved chase email straight away.</p>
+      ${D.emailLog && D.emailLog.recent_players > 0 ? `<p class="muted small">(anyone emailed in the last hour is skipped automatically)</p>` : ""}`,
+    ok: `Email ${plural(t.n, "player")}`,
+  });
+  if (yes) await runChase(btn, "now");
+}
+
 /* ---------- Actions ---------- */
 
 // Checklist of players for the postponed / reopen dialogs
@@ -1358,6 +1603,31 @@ const ACTIONS = {
   remove: removePlayer,
   role: setRole,
 
+  "ch-add": () => {
+    const have = new Set(ui.chase.slots.map(slotKey));
+    for (const hour of [9, 12, 15, 8, 10, 11, 13, 14, 16, 18, 19, 20, 7, 6, 5, 4, 3, 2, 1, 0, 17, 21, 22, 23]) {
+      for (const day of [3, 4, 5, 1, 2, 6, 7]) {
+        if (have.has(`${day}-${hour}`)) continue;
+        ui.chase.slots = sortSlots([...ui.chase.slots, { day, hour }]);
+        renderChase();
+        return;
+      }
+    }
+    flash("Every time is already in the list.", "error");
+  },
+  "ch-del": (b) => { ui.chase.slots.splice(Number(b.dataset.i), 1); renderChase(); },
+  "ch-ph": (b) => {
+    const key = ui.chase.target === "subject" ? "subject" : "body";
+    const field = $(key === "subject" ? "#ch-subject" : "#ch-body");
+    field.setRangeText(b.dataset.ph, field.selectionStart ?? field.value.length, field.selectionEnd ?? field.value.length, "end");
+    ui.chase[key] = field.value;
+    field.focus();
+    updatePreview();
+  },
+  "ch-save": saveChase,
+  "ch-test": (b) => runChase(b, "test"),
+  "ch-now": chaseNow,
+
   "c-edit": (b) => openSheet("club", Number(b.dataset.id)),
   "c-new": () => openSheet("club", "new"),
 };
@@ -1403,6 +1673,31 @@ document.addEventListener("change", (e) => {
   }
 });
 document.addEventListener("toggle", (e) => { if (e.target.id === "wk-nl") ui.week.nlOpen = e.target.open; }, true);
+
+document.addEventListener("focusin", (e) => {
+  if (e.target.id === "ch-subject") ui.chase.target = "subject";
+  else if (e.target.id === "ch-body") ui.chase.target = "body";
+});
+document.addEventListener("input", (e) => {
+  const t = e.target;
+  if (t.id === "ch-subject") { ui.chase.subject = t.value; updatePreview(); }
+  else if (t.id === "ch-body") { ui.chase.body = t.value; updatePreview(); }
+});
+document.addEventListener("change", (e) => {
+  const t = e.target;
+  if (t.id === "ch-enabled") { ui.chase.enabled = t.checked; updateDirty(); return; }
+  if (t.dataset && t.dataset.slot != null && t.closest("#chase")) {
+    const i = Number(t.dataset.slot), s = ui.chase.slots[i];
+    const next = { ...s, [t.dataset.k]: Number(t.value) };
+    if (ui.chase.slots.some((o, j) => j !== i && slotKey(o) === slotKey(next))) {
+      t.value = String(s[t.dataset.k]);   // already in the list: put it back
+      return flash(`${slotTime(next)} is already in the list.`, "error");
+    }
+    ui.chase.slots[i] = next;
+    $("#ch-slotnotes").innerHTML = slotNotesHtml();
+    updateDirty();
+  }
+});
 
 /* ---------- Forms ---------- */
 
@@ -1578,7 +1873,7 @@ inviteForm.addEventListener("submit", async (e) => {
 
 // Re-drawing replaces buttons, so each of these hands focus on to the matching new control
 renderAll = keepFocus(renderAll); renderWeek = keepFocus(renderWeek); renderWkTeams = keepFocus(renderWkTeams);
-renderOverride = keepFocus(renderOverride); renderPlayers = keepFocus(renderPlayers); renderClubs = keepFocus(renderClubs);
+renderOverride = keepFocus(renderOverride); renderChase = keepFocus(renderChase); renderPlayers = keepFocus(renderPlayers); renderClubs = keepFocus(renderClubs);
 function keepFocus(fn) { return (...a) => withFocus(() => fn(...a)); }
 
 /* ---------- Start ---------- */

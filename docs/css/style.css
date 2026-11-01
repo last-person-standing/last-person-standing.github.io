@@ -487,3 +487,22 @@ dialog.sheet {
 @media (min-width: 560px) {
   .ov-grid th.corner, .ov-grid th.pl { width: 168px; min-width: 168px; max-width: 168px; }
 }
+
+/* Chase emails card */
+:is(.host, dialog) textarea {
+  display: block; width: 100%; margin-top: 6px; min-height: 120px; padding: 10px 12px; resize: vertical;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); font: inherit; font-size: 16px;
+}
+:is(.host, dialog) textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.slot-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 8px; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.slot-row button { grid-column: 1 / -1; }
+.note-warn { margin: 8px 0; padding: 8px 12px; border-radius: 8px; background: var(--gold-bg); color: var(--gold-ink); font-size: 14px; font-weight: 600; }
+.note-warn[hidden] { display: none; }
+.preview { margin: 0 0 12px; padding: 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; }
+.pv-subject { margin: 0 0 8px; font-weight: 700; overflow-wrap: anywhere; }
+.pv-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+.linktext { margin: 0 0 12px; padding: 8px 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; font-size: 14px; overflow-wrap: anywhere; }
+#chase button.full { margin-top: 4px; }
+#chase .chips { margin-bottom: 4px; }
+.sends { list-style: none; margin: 0; padding: 0; }
+.sends li { padding: 10px 0; border-bottom: 1px solid var(--line); }
