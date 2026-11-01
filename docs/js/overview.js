@@ -38,7 +38,10 @@ async function load(gameId) {
       teams.size ? null : sb.from("teams").select("id,name,short_name,colour1,colour2"),
     ]);
     if (mine !== token) return;
-    if (res.error || !res.data || !Array.isArray(res.data.players)) throw res.error || new Error("bad data");
+    // With no game yet the server sends just { game: null, games: [] }
+    if (res.error || !res.data || (res.data.game && !Array.isArray(res.data.players))) {
+      throw res.error || new Error("bad data");
+    }
     if (tm) {
       if (tm.error) throw tm.error;
       teams = new Map((tm.data || []).map((t) => [t.id, t]));
