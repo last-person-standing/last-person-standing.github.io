@@ -394,3 +394,96 @@ dialog.sheet {
 .host .team .swatch { width: 22px; height: 22px; }
 .host .team-name { font-size: 15px; }
 @media (max-width: 420px) { .host .scrollbox .teams { grid-template-columns: minmax(0, 1fr); } }
+
+/* ---- Overview screen ---- */
+.page.ov { max-width: 960px; }
+.ov .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.ov-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 8px 0 12px; }
+.ov-head h1 { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.ov-head .badge { flex: none; font-size: 13px; padding: 4px 10px; }
+.ov-switch { margin: 0 0 12px; }
+.ov select, .ov input[type="search"] {
+  display: block; width: 100%; margin-top: 6px; min-height: var(--tap);
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--bg); color: var(--ink); font-size: 16px;
+}
+.ov select:focus, .ov input[type="search"]:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ov-winner { font-size: 18px; overflow-wrap: anywhere; }
+.ov-winner p { margin: 6px 0 0; font-size: 16px; font-weight: 500; }
+.ov-hidden { margin: 0 0 12px; }
+
+.ov-big { margin: 0; font-size: 20px; }
+.ov-big strong { font-size: 44px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.ov-week { margin: 4px 0 0; }
+.ov .meter { height: 14px; margin: 10px 0 6px; }
+
+/* Most popular picks */
+.bars { list-style: none; margin: 8px 0 12px; padding: 0; }
+.bar-row { margin: 0 0 10px; }
+.bar-top { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; min-width: 0; }
+.ov .swatch { width: 22px; height: 22px; border-width: 2px; }
+.ov .swatch.other { background: var(--line); border-style: dashed; }
+.bar-name { flex: 1; min-width: 0; font-weight: 700; overflow-wrap: anywhere; }
+.bar-res { font-weight: 800; }
+.bar-val { flex: none; font-variant-numeric: tabular-nums; color: var(--muted); }
+.bar-val strong { color: var(--ink); }
+.bar-track { height: 14px; border-radius: 7px; background: var(--line); overflow: hidden; }
+.bar-fill { display: block; height: 100%; border-radius: 7px; background: var(--muted); }
+.bar-fill.won { background: var(--go); }
+.bar-fill.lost { background: var(--stop); }
+.bar-fill.other { background: var(--muted); opacity: .6; }
+.legend { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 14px; color: var(--muted); }
+.legend li { display: flex; align-items: center; gap: 6px; }
+.lg-box { flex: none; width: 14px; height: 14px; border-radius: 4px; border: 1px solid var(--muted); }
+.lg-box.won { background: var(--go); border-color: var(--go); }
+.lg-box.lost { background: var(--stop); border-color: var(--stop); }
+.lg-box.pending { background: var(--muted); border-color: var(--muted); }
+.lg-box.hid { background: var(--bg); }
+
+/* The grid: scrolls inside its own box; first column and header row stay put */
+.ov-grid-card { padding: 16px 0 12px; overflow: hidden; }
+.ov-pad { padding: 0 16px; }
+.ov .card, .grid-wrap { position: relative; }   /* keeps visually-hidden text inside its box, so the page never scrolls sideways */
+.ov-search { margin-bottom: 8px; }
+.ov-grid-card .chips { margin-bottom: 8px; }
+.grid-wrap {
+  overflow: auto; max-height: 75vh; max-height: 75dvh; margin: 8px 0 4px;
+  border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); overscroll-behavior-x: contain;
+}
+.ov-grid { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; font-size: 14px; }
+.ov-grid th, .ov-grid td {
+  padding: 6px 4px; text-align: center; vertical-align: middle;
+  border-bottom: 1px solid var(--line); border-right: 1px solid var(--line);
+}
+.ov-grid thead th {
+  position: sticky; top: 0; z-index: 2; background: var(--surface); color: var(--ink);
+  border-bottom: 2px solid var(--line); font-size: 13px; white-space: nowrap; min-width: 64px;
+}
+.ov-grid thead th.off { color: var(--muted); }
+.ov-grid th.corner, .ov-grid th.pl { position: sticky; left: 0; width: 120px; min-width: 120px; max-width: 120px; text-align: left; padding: 6px 8px; background: var(--surface); border-right: 2px solid var(--line); }
+.ov-grid th.corner { z-index: 4; }
+.ov-grid th.pl { z-index: 1; text-transform: none; letter-spacing: 0; font-size: 14px; font-weight: 700; color: var(--ink); }
+.pl-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; overflow-wrap: anywhere; line-height: 1.2; }
+.pl-sub { display: block; font-size: 12px; font-weight: 600; color: var(--muted); }
+.pl-sub.win { color: var(--gold-ink); background: var(--gold-bg); display: inline-block; padding: 0 6px; border-radius: 99px; }
+.pl-tag { display: inline-block; margin-top: 2px; padding: 0 6px; border-radius: 99px; font-size: 12px; font-weight: 800; background: var(--ink); color: var(--surface); }
+.ov-grid tr.is-out th.pl .pl-name { color: var(--muted); font-weight: 600; }
+
+.ov-grid td.g { min-width: 64px; max-width: 88px; height: 48px; font-weight: 700; font-size: 13px; line-height: 1.2; overflow-wrap: anywhere; background: var(--surface); color: var(--ink); }
+.ov-grid td.won { background: var(--ok-bg); }
+.ov-grid td.lost { background: var(--stop); color: #fff; font-weight: 800; box-shadow: inset 0 0 0 2px var(--ink); }
+.ov-grid td.nopick { background: var(--err-bg); color: var(--danger); box-shadow: inset 0 0 0 2px var(--stop); }
+.ov-grid td.hid, .ov-grid td.off { background: var(--bg); color: var(--muted); font-weight: 600; }
+.ov-grid td.off { font-style: italic; }
+.ov-grid td.gone { background: var(--bg); }
+
+/* The logged-in player's own row */
+.ov-grid tr.me > th, .ov-grid tr.me > td { border-top: 2px solid var(--ink); border-bottom: 2px solid var(--ink); }
+.ov-grid tr.me th.pl { background: var(--gold-bg); color: var(--gold-ink); }
+.ov-grid tr.me th.pl .pl-sub { color: var(--gold-ink); }
+.ov-grid tr.me th.pl .pl-tag { background: var(--gold-ink); color: var(--gold-bg); }
+.ov-grid tr.me.is-out th.pl .pl-name { color: var(--gold-ink); }
+.ov-grid-card > .legend { margin-top: 10px; }
+@media (min-width: 560px) {
+  .ov-grid th.corner, .ov-grid th.pl { width: 168px; min-width: 168px; max-width: 168px; }
+}
