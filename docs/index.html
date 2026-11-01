@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Log in · {game}</title>
+  <script>
+    // Invite / reset links that land here are passed on to the set-password page
+    window.handingOff = /(type=(invite|recovery)|error_code=)/.test(location.hash);
+    if (window.handingOff) location.replace("set-password.html" + location.hash);
+  </script>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <main class="auth">
+    <div class="stripe"></div>
+    <h1 data-game-name></h1>
+
+    <form id="login-form" class="card" novalidate>
+      <h2>Log in</h2>
+      <label>Email
+        <input type="email" name="email" autocomplete="email" inputmode="email" required>
+      </label>
+      <label>Password
+        <input type="password" name="password" autocomplete="current-password" required>
+      </label>
+      <button type="submit" class="full">Log in</button>
+      <p class="msg" role="status"></p>
+      <div class="row between">
+        <button type="button" class="link" data-show="forgot-form">Forgot password?</button>
+        <button type="button" class="link" data-show="signup-form">New? Sign up</button>
+      </div>
+    </form>
+
+    <form id="signup-form" class="card" novalidate hidden>
+      <h2>Sign up</h2>
+      <label>Your name (shown to other players)
+        <input type="text" name="name" autocomplete="name" maxlength="60" required>
+      </label>
+      <label>Email
+        <input type="email" name="email" autocomplete="email" inputmode="email" required>
+      </label>
+      <label>Password (at least 8 characters)
+        <input type="password" name="password" autocomplete="new-password" minlength="8" required>
+      </label>
+      <label>Type it again
+        <input type="password" name="confirm" autocomplete="new-password" minlength="8" required>
+      </label>
+      <button type="submit" class="full">Create account</button>
+      <p class="msg" role="status"></p>
+      <button type="button" class="link" data-show="login-form">I already have an account</button>
+    </form>
+
+    <form id="forgot-form" class="card" novalidate hidden>
+      <h2>Reset your password</h2>
+      <p class="muted small">Enter your email and we'll send you a link to set a new password.</p>
+      <label>Email
+        <input type="email" name="email" autocomplete="email" inputmode="email" required>
+      </label>
+      <button type="submit" class="full">Send reset link</button>
+      <p class="msg" role="status"></p>
+      <button type="button" class="link" data-show="login-form">Back to log in</button>
+    </form>
+  </main>
+
+  <script type="module">
+    import { sb, $, say, pageUrl } from "./js/app.js";
+
+    if (window.handingOff) await new Promise(() => {});  // leaving for set-password.html
+
+    // Already logged in (or just confirmed a new account)? Go to the pick page.
+    const { data: { session } } = await sb.auth.getSession();
+    if (session) location.replace("pick.html");
+
+    const forms = ["login-form", "signup-form", "forgot-form"].map((id) => $("#" + id));
+    const [login, signup, forgot] = forms;
+
+    // Switch between the three forms, carrying the email across
+    document.querySelectorAll("[data-show]").forEach((btn) => btn.addEventListener("click", () => {
+      const from = btn.closest("form");
+      const to = $("#" + btn.dataset.show);
+      to.email.value ||= from.email.value;
+      forms.forEach((f) => (f.hidden = f !== to));
+    }));
+
+    login.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const msg = $(".msg", login);
+      const btn = $("button[type=submit]", login);
+      btn.disabled = true; say(msg, "Logging in…");
+      const { error } = await sb.auth.signInWithPassword({
+        email: login.email.value.trim(),
+        password: login.password.value,
+      });
+      btn.disabled = false;
+      if (error) {
+        say(msg, /confirm/i.test(error.message)
+          ? "Please confirm your email first. Use the link we sent you (check spam too)."
+          : /invalid/i.test(error.message)
+            ? "Email or password not recognised. Try again, or use \"Forgot password\"."
+            : error.message, "error");
+        return;
+      }
+      location.replace("pick.html");
+    });
+
+    signup.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const msg = $(".msg", signup);
+      const name = signup.name.value.trim();
+      const email = signup.email.value.trim();
+      const pw = signup.password.value;
+      if (!name) return say(msg, "Please enter your name.", "error");
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return say(msg, "Please enter a valid email.", "error");
+      if (pw.length < 8) return say(msg, "Password must be at least 8 characters.", "error");
+      if (pw !== signup.confirm.value) return say(msg, "The two passwords don't match.", "error");
+
+      const btn = $("button[type=submit]", signup);
+      btn.disabled = true; say(msg, "Creating your account…");
+      const { error } = await sb.auth.signUp({
+        email,
+        password: pw,
+        options: { data: { display_name: name }, emailRedirectTo: pageUrl("index.html") },
+      });
+      btn.disabled = false;
+      if (error) {
+        return say(msg, /rate|seconds/i.test(error.message)
+          ? "Please wait a minute and try again."
+          : /not allowed|disabled/i.test(error.message)
+            ? "Sign-ups are switched off at the moment. Ask the host to invite you."
+            : error.message, "error");
+      }
+      signup.reset();
+      say(msg, `Nearly there! We've emailed ${email} a link to confirm your account. Check your spam folder too.`, "ok");
+    });
+
+    forgot.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const msg = $(".msg", forgot);
+      const email = forgot.email.value.trim();
+      if (!email) return say(msg, "Enter your email address.", "error");
+      const btn = $("button[type=submit]", forgot);
+      btn.disabled = true; say(msg, "Sending…");
+      const { error } = await sb.auth.resetPasswordForEmail(email, {
+        redirectTo: pageUrl("set-password.html"),
+      });
+      btn.disabled = false;
+      if (error && /rate|seconds/i.test(error.message)) {
+        return say(msg, "Please wait a minute before asking for another link.", "error");
+      }
+      // Same message whether or not the email exists, so accounts can't be guessed
+      say(msg, "If that email has an account, a reset link is on its way. Check your spam folder too.", "ok");
+    });
+  </script>
+</body>
+</html>

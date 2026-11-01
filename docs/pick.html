@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>My pick · {game}</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <main class="page">
+    <h1 id="hello">Hello</h1>
+    <p id="credit" class="muted small"></p>
+
+    <p id="flash" class="msg" role="status"></p>
+    <p id="loading" class="muted" role="status">Loading your game…</p>
+    <p id="error" class="msg error" role="alert"></p>
+
+    <div id="game" hidden>
+      <section class="card status" id="status"></section>
+      <section class="banner" id="banner" hidden></section>
+      <section class="card" id="current" hidden></section>
+      <section class="card" id="picker" aria-labelledby="picker-title" hidden></section>
+      <section class="card" id="run" aria-labelledby="run-title" hidden></section>
+    </div>
+
+    <section class="card pay" id="pay" hidden>
+      <h2 id="pay-title">How to pay</h2>
+      <p id="pay-intro" class="small"></p>
+      <dl id="pay-details"></dl>
+      <p id="pay-note" class="muted small"></p>
+    </section>
+  </main>
+
+  <!-- Sticky confirm bar: appears once a club is tapped in the picker -->
+  <div class="confirm-bar" id="bar" hidden>
+    <div class="bar-inner">
+      <p id="bar-msg" class="msg" role="alert"></p>
+      <p id="bar-text" class="bar-text"></p>
+      <div class="bar-buttons">
+        <button type="button" class="secondary" id="bar-cancel">Cancel</button>
+        <button type="button" class="go" id="bar-ok">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="js/pick.js"></script>
+</body>
+</html>

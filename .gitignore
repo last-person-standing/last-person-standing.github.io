@@ -1,0 +1,15 @@
+# Never upload secrets
+.env
+.env.*
+*.key
+supabase/.temp/
+supabase/.branches/
+
+# Editor and OS files
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local test tools
+node_modules/
