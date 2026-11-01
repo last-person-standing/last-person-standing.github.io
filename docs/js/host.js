@@ -309,7 +309,7 @@ async function load() {
   const [st, settings, profiles, teams, games, wins, mail] = await Promise.all([
     sb.rpc("my_game_state"),   // only used for the server clock
     sb.from("app_settings").select("*").single(),
-    sb.from("profiles").select("id,display_name,email,role,credit,player_no").order("display_name"),
+    sb.from("profiles").select("id,display_name,email,role,credit,player_no,created_at").order("display_name"),
     sb.from("teams").select("id,name,short_name,league,colour1,colour2,active").order("name"),
     sb.from("games").select("id,name,status,started_at,ended_at,winner_note").order("started_at", { ascending: false }),
     sb.from("game_entries").select("game_id,player_id").eq("status", "winner"),
@@ -874,6 +874,25 @@ function renderPlayers() {
       </span>
     </button>`).join("")
     : `<p class="muted">${D.profiles.length ? "No players match." : "No players yet."}${!D.active && ["alive", "out"].includes(ui.pf) ? " There is no game running." : ""}</p>`;
+  renderNotice(all);
+}
+
+// Banner above the tabs: players awaiting payment, and how many signed up since the host last looked
+const SEEN_KEY = "lps-host-seen-signups";
+function lastSeen() {
+  try { return localStorage.getItem(SEEN_KEY) || ""; } catch { return ""; }
+}
+function renderNotice(all) {
+  const waiting = all.filter((x) => x.s === "wait");
+  const seen = lastSeen();
+  const fresh = waiting.filter((x) => x.p.created_at && x.p.created_at > seen).length;
+  const el = $("#notice");
+  el.hidden = waiting.length === 0;
+  if (el.hidden) return;
+  el.innerHTML = `
+    <p><strong>${plural(waiting.length, "player")} awaiting payment</strong>${fresh && seen ? ` · <span class="badge wait">${fresh} new</span>` : ""}
+      <span class="muted small">Check your bank for their references, then add credit.</span></p>
+    <button type="button" class="secondary" data-act="notice-view">View</button>`;
 }
 
 /* ----- Sheet (player or club detail) ----- */
@@ -1597,6 +1616,12 @@ const ACTIONS = {
   },
 
   "p-filter": (b) => { ui.pf = b.dataset.f; renderPlayers(); },
+  "notice-view": () => {
+    try { localStorage.setItem(SEEN_KEY, new Date().toISOString()); } catch {}
+    ui.pf = "wait";
+    setTab("players", true);
+    renderPlayers();
+  },
   "p-open": (b) => openSheet("player", b.dataset.id),
   "cr-quick": (b) => addCredit(b, Number(b.dataset.n), ""),
   enter: enterPlayer,
