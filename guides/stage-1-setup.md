@@ -21,8 +21,9 @@ Takes about 30–40 minutes. Everything here is free. If a button name on a webs
    You should see *"Success. No rows returned"*.
 3. **Only after you've confirmed the club list**, do the same with `supabase/002_seed_teams.sql`.
 4. Then do the same with `supabase/003_signup_payment.sql` (sign-up and payment details).
-5. Check: left menu → **Table Editor** → `teams` should show 92 rows.
-6. Optional check that UK time is handled correctly. Run:
+5. Then, one at a time and in this order, the same with `004_picks.sql`, `005_host.sql`, `006_overview.sql` and `007_chase_emails.sql`. The website needs all of these to load. (Don't run anything in `supabase/test/` on your real project. `008` comes later, in the Stage 5 guide.)
+6. Check: left menu → **Table Editor** → `teams` should show 92 rows.
+7. Optional check that UK time is handled correctly. Run:
    ```sql
    select next_friday_deadline() at time zone 'Europe/London';
    ```
@@ -46,6 +47,7 @@ In Supabase:
    - **Password:** the SMTP key you generated
    - **Save**
 2. **Authentication → Rate Limits** → set *emails sent per hour* to **100** (so you can invite everyone in one go). Save.
+   Also **Authentication → Sign In / Providers → Email** → set **Email OTP Expiration** to `86400` (24 hours). Emails without your own domain can arrive late, and links otherwise expire after 1 hour.
 3. **Authentication → Sign In / Providers**: make sure **"Allow new users to sign up"** is **on** and, under Email, **"Confirm email"** is **on**. Players sign themselves up from the link, and the confirmation email proves the address is real. If there's a **minimum password length** setting, set it to **8**.
    *Anyone with the link can create an account, but they can't play until the host adds credit.*
 4. **Authentication → URL Configuration**:
@@ -103,8 +105,6 @@ To make another host later, run the same SQL with their email.
 
 Use a second email address of your own (or a friend's) as a test player.
 
-| # | Do this | You should see |
-|---|---|---|
 | # | Do this | You should see |
 |---|---|---|
 | 1 | Log in as yourself | "Hello, *your name*" and the tabs **My pick · Overview · Host** |

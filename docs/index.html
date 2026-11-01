@@ -26,6 +26,7 @@
       </label>
       <button type="submit" class="full">Log in</button>
       <p class="msg" role="status"></p>
+      <button type="button" class="link" id="resend" hidden>Resend confirmation email</button>
       <div class="row between">
         <button type="button" class="link" data-show="forgot-form">Forgot password?</button>
         <button type="button" class="link" data-show="signup-form">New? Sign up</button>
@@ -93,15 +94,35 @@
         password: login.password.value,
       });
       btn.disabled = false;
+      $("#resend").hidden = !(error && /confirm/i.test(error.message));
       if (error) {
         say(msg, /confirm/i.test(error.message)
-          ? "Please confirm your email first. Use the link we sent you (check spam too)."
+          ? "Please confirm your email first. Use the link we sent you (check spam too), or tap below for a new one."
           : /invalid/i.test(error.message)
             ? "Email or password not recognised. Try again, or use \"Forgot password\"."
             : error.message, "error");
         return;
       }
       location.replace("pick.html");
+    });
+
+    // New confirmation link for someone whose first one expired or never arrived
+    $("#resend").addEventListener("click", async () => {
+      const msg = $(".msg", login);
+      const btn = $("#resend");
+      btn.disabled = true; say(msg, "Sending…");
+      const { error } = await sb.auth.resend({
+        type: "signup",
+        email: login.email.value.trim(),
+        options: { emailRedirectTo: pageUrl("index.html") },
+      });
+      btn.disabled = false;
+      if (error) {
+        return say(msg, /rate|seconds/i.test(error.message)
+          ? "Please wait a minute before asking for another link." : error.message, "error");
+      }
+      btn.hidden = true;
+      say(msg, "A new confirmation link is on its way. Check your spam folder too, and use the newest email.", "ok");
     });
 
     signup.addEventListener("submit", async (e) => {
