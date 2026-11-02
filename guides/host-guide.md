@@ -38,6 +38,16 @@ When one player is left (or everyone goes out in the same week): Host → **Game
 - Tick the winner(s) and add a note, e.g. "Split pot".
 - The game is saved in **History**, and you can start the next one straight away.
 
+## Messaging the group
+For anything that isn't a chase, like a weekend round-up, news or a payment reminder: Host → **Players** → **Message players**.
+- Choose who gets it:
+  - **Everyone signed up**
+  - **Everyone in the game:** the current game, or the last one if none is running. This includes anyone knocked out.
+- Write a subject and message. `{name}` and `{link}` fill in automatically. Your name is added at the bottom.
+- Tap **Send**. It goes straight away and can't be unsent. Replies come to your own email.
+- **Sent messages** shows the last 10 sent by either host.
+- Only people who have signed up and confirmed their email get it. Use the group chat for anyone else.
+
 ## Every summer
 Host → **Clubs**: move promoted and relegated clubs between divisions. Aim for 20 / 24 / 24 / 24, and check the counts at the top.
 

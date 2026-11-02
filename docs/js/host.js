@@ -108,6 +108,7 @@ const ui = {
   end: { gameId: null, ticks: new Set(), note: "", touched: false },
   startResult: null,
   chase: { init: false, stale: false, enabled: true, slots: [], subject: "", body: "", target: "body", result: null, setup: "" },
+  msg: { audience: "everyone", subject: "", body: "", target: "body", reqId: null, result: null },
   pq: "", pf: "all", cq: "",
   sheet: null,     // { kind: "player" | "club", id }
   opener: null,    // selector of the control that opened the detail panel
@@ -306,7 +307,7 @@ async function act(btn, fn, okText, { light = false } = {}) {
 const must = (r) => { if (r.error) throw r.error; return r.data; };
 
 async function load() {
-  const [st, settings, profiles, teams, games, wins, mail] = await Promise.all([
+  const [st, settings, profiles, teams, games, wins, mail, aud, msgs] = await Promise.all([
     sb.rpc("my_game_state"),   // only used for the server clock
     sb.from("app_settings").select("*").single(),
     sb.from("profiles").select("id,display_name,email,role,credit,player_no,created_at").order("display_name"),
@@ -314,10 +315,15 @@ async function load() {
     sb.from("games").select("id,name,status,started_at,ended_at,winner_note").order("started_at", { ascending: false }),
     sb.from("game_entries").select("game_id,player_id").eq("status", "winner"),
     sb.from("email_settings").select("*").eq("id", 1).single(),
+    sb.rpc("message_audience"),
+    sb.from("message_log").select("id,sender_name,audience,game_name,subject,body,recipients,failed,status,sent_at")
+      .order("sent_at", { ascending: false }).limit(10),
   ]);
   if (st.data && st.data.now) D.offset = Date.parse(st.data.now) - Date.now();
   D.settings = settings.data || {};
   D.email = mail.error ? null : mail.data;
+  D.audience = aud.error || !aud.data ? null : aud.data;   // { everyone, game }; null = couldn't load
+  D.messages = msgs.error ? null : msgs.data;
   D.warn = settings.error ? "Couldn't load the payment details, so bank references may be wrong. Tap Refresh to try again." : "";
   D.profiles = must(profiles);
   D.teams = must(teams);
@@ -483,6 +489,7 @@ function renderAll() {
   renderGame();
   renderClubs();
   renderChase();
+  renderMessage();
   renderSheet();
 }
 
@@ -1383,6 +1390,146 @@ async function chaseNow(btn) {
   if (yes) await runChase(btn, "now");
 }
 
+/* ----- Players: message players (a host's own email, not a chase) ----- */
+
+const MSG_PLACEHOLDERS = ["{name}", "{link}"];
+const signOff = () => `--\nSent by ${me.display_name || "the host"} via Last Person Standing`;
+const fillMsg = (text) => text.replace(/\{(name|link)\}/g, (m) => (m === "{name}" ? me.display_name || "there" : pickLink()));
+
+// The chosen audience: who it goes to and how many people (confirmed emails only)
+function msgAudience() {
+  const a = D.audience, g = a && a.game;
+  if (ui.msg.audience === "game" && g) {
+    return { n: Number(g.count) || 0, label: `everyone in ${g.name}`, gameId: g.id };
+  }
+  return { n: a ? Number(a.everyone) || 0 : 0, label: "everyone signed up", gameId: null };
+}
+function msgPreviewHtml() {
+  const m = ui.msg;
+  return `<p class="pv-subject">${escapeHtml(fillMsg(m.subject)) || '<span class="muted">(no subject)</span>'}</p>
+    <div class="pv-body">${m.body ? escapeHtml(fillMsg(m.body)) : '<span class="muted">(empty)</span>'}\n\n<span class="muted">${escapeHtml(signOff())}</span></div>`;
+}
+function updateMsgPreview() { const el = $("#msg-preview"); if (el) el.innerHTML = msgPreviewHtml(); }
+
+const sentFmt = new Intl.DateTimeFormat("en-GB", { timeZone: UK_TZ, weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit", hour12: true });
+function sentHtml() {
+  if (!D.messages) return `<p class="msg error">Couldn't load the sent messages.</p>`;
+  if (!D.messages.length) return `<p class="muted">Nothing sent yet.</p>`;
+  return `<ul class="sends">${D.messages.map((r) => {
+    const to = r.audience === "game" ? `everyone in ${r.game_name || "a game"}` : "everyone";
+    const count = r.status === "sending" ? "still sending, or stopped part-way" : `${plural(Number(r.recipients) || 0, "person", "people")}${r.failed ? `, ${r.failed} failed` : ""}`;
+    return `<li><details><summary><strong>${escapeHtml(r.subject)}</strong><br>
+      <span class="muted small">${escapeHtml(sentFmt.format(new Date(r.sent_at)))} by ${escapeHtml(r.sender_name)}, to ${escapeHtml(to)} (${escapeHtml(count)})</span></summary>
+      <div class="pv-body">${escapeHtml(r.body)}</div></details></li>`;
+  }).join("")}</ul>`;
+}
+
+function renderMessage() {
+  const el = $("#message");
+  if (!el) return;
+  const m = ui.msg, a = D.audience;
+  if (!a) {
+    el.innerHTML = `<h2 id="msg-title">Message players</h2>
+      <p class="msg error">Couldn't load this. If it's new, run supabase/009_messages.sql in the Supabase SQL Editor, then tap Refresh.</p>`;
+    return;
+  }
+  const g = a.game;
+  if (m.audience === "game" && !g) m.audience = "everyone";
+  const t = msgAudience();
+  const linkNote = /\{link\}/.test(m.subject + m.body) && !String((D.email && D.email.pick_url) || "").trim()
+    ? `<p class="note-warn">{link} needs the site link saved: open Settings → Chase emails and tap Save.</p>` : "";
+  const res = m.result ? `<p class="msg ${m.result.type}">${escapeHtml(m.result.text)}</p>` : "";
+
+  el.innerHTML = `
+    <h2 id="msg-title">Message players</h2>
+    <p class="muted small">Your own email to the group, sent straight away: a round-up, news, anything. It isn't a chase email. Replies come to you at ${escapeHtml(me.email)}.</p>
+
+    <fieldset class="msg-aud">
+      <legend>Send to</legend>
+      <label class="chk"><input type="radio" name="msg-aud" value="everyone"${m.audience === "everyone" ? " checked" : ""}>
+        <span>Everyone signed up <span class="muted small">(${plural(Number(a.everyone) || 0, "person", "people")})</span></span></label>
+      <label class="chk"><input type="radio" name="msg-aud" value="game"${m.audience === "game" ? " checked" : ""}${g ? "" : " disabled"}>
+        <span>${g ? `Everyone in ${escapeHtml(g.name)} <span class="muted small">(${plural(Number(g.count) || 0, "person", "people")}, including anyone knocked out)</span>` : `Everyone in a game <span class="muted small">(no game yet)</span>`}</span></label>
+    </fieldset>
+    <p class="muted small">Only people who have confirmed their email are counted. Anyone who hasn't signed up can't be emailed, so use the group chat for them.</p>
+
+    <label>Subject
+      <input type="text" id="msg-subject" maxlength="200" autocomplete="off" value="${escapeHtml(m.subject)}">
+    </label>
+    <p class="muted small" id="msg-ph-help">Tap to add to the subject or message, wherever you last typed:</p>
+    <div class="chips" role="group" aria-labelledby="msg-ph-help">
+      ${MSG_PLACEHOLDERS.map((p) => `<button type="button" class="chip" data-act="msg-ph" data-ph="${escapeHtml(p)}">${escapeHtml(p)}</button>`).join("")}
+    </div>
+    <label>Message
+      <textarea id="msg-body" rows="8" maxlength="5000">${escapeHtml(m.body)}</textarea>
+    </label>
+    <h3>Preview</h3>
+    <div class="preview" id="msg-preview">${msgPreviewHtml()}</div>
+    ${linkNote}
+
+    <button type="button" class="go full" data-act="msg-send"${t.n ? "" : " disabled"}>Send to ${plural(t.n, "person", "people")}</button>
+    <div id="msg-result" role="status">${res}</div>
+
+    <h3>Sent messages <span class="muted small">(last 10, from any host)</span></h3>
+    ${sentHtml()}`;
+}
+
+// Call the email function to send a message. Throws a plain sentence.
+async function messageCall(payload) {
+  let r;
+  try { r = await sb.functions.invoke("chase-emails", { body: { mode: "message", ...payload } }); }
+  catch { r = { error: { name: "FunctionsFetchError" } }; }
+  if (r.error) {
+    let msg = "";
+    try { msg = (await r.error.context.json()).error || ""; } catch {}
+    throw new Error(msg || "We couldn't confirm whether it was sent. Tap Refresh and check Sent messages. Tapping Send again won't send it twice.");
+  }
+  if (r.data && r.data.error) throw new Error(String(r.data.error));
+  return r.data || {};
+}
+
+async function sendMessage(btn) {
+  const m = ui.msg, t = msgAudience();
+  const subject = m.subject.trim(), body = m.body.trim();
+  if (!subject) return flash("Enter a subject for the email.", "error");
+  if (!body) return flash("Enter the message.", "error");
+  if (!t.n) return flash("There's nobody to send it to yet.", "error");
+  const yes = await ask({
+    title: `Email ${plural(t.n, "person", "people")}?`,
+    body: `<p>“${escapeHtml(subject)}” goes to ${escapeHtml(t.label)} straight away. It can't be unsent.</p>`,
+    ok: "Send",
+  });
+  if (!yes) return;
+  // Same id until it's sent, so a retry after a lost connection can't email everyone twice
+  m.reqId ??= crypto.randomUUID();
+  const done = await act(btn, async () => {
+    try {
+      const r = await messageCall({ request_id: m.reqId, audience: m.audience, game_id: t.gameId, subject, body });
+      if (r.already && r.status === "sent") {
+        m.result = { type: "ok", text: `That message had already been sent (to ${plural(Number(r.sent) || 0, "person", "people")}), so it wasn't sent again.` };
+      } else if (r.already) {
+        // Still going out, or stopped part-way: keep the text, but don't send it again
+        m.result = { type: "error", text: "That message is still sending, or stopped part-way. Wait a minute, tap Refresh and check Sent messages before doing anything else." };
+        return r;
+      } else {
+        const errs = Array.isArray(r.errors) ? r.errors.slice(0, 5).map(String) : [];
+        m.result = { type: r.ok === false ? "error" : "ok",
+          text: `Sent to ${plural(Number(r.sent) || 0, "person", "people")}.`
+            + (r.failed ? ` ${r.failed} failed${errs.length ? `: ${errs.join("; ")}` : ""}.` : "")
+            + (r.stopped ? ` ${r.stopped}` : "") };
+      }
+      if (r.already || Number(r.sent) > 0) Object.assign(m, { subject: "", body: "", reqId: null });
+      else m.reqId = null;   // nothing went out, so a fresh send is fine
+      return r;
+    } catch (e) {
+      m.result = { text: e.message, type: "error" };
+      renderMessage();
+      throw e;
+    }
+  }, () => (m.result.type === "ok" ? m.result.text : null));
+  if (done && m.result && m.result.type === "error") flash(m.result.text, "error");
+}
+
 /* ---------- Actions ---------- */
 
 // Checklist of players for the postponed / reopen dialogs
@@ -1653,6 +1800,17 @@ const ACTIONS = {
   "ch-test": (b) => runChase(b, "test"),
   "ch-now": chaseNow,
 
+  "msg-ph": (b) => {
+    const key = ui.msg.target === "subject" ? "subject" : "body";
+    const field = $(key === "subject" ? "#msg-subject" : "#msg-body");
+    field.setRangeText(b.dataset.ph, field.selectionStart ?? field.value.length, field.selectionEnd ?? field.value.length, "end");
+    ui.msg[key] = field.value;
+    ui.msg.reqId = null;
+    field.focus();
+    updateMsgPreview();
+  },
+  "msg-send": sendMessage,
+
   "c-edit": (b) => openSheet("club", Number(b.dataset.id)),
   "c-new": () => openSheet("club", "new"),
 };
@@ -1702,14 +1860,20 @@ document.addEventListener("toggle", (e) => { if (e.target.id === "wk-nl") ui.wee
 document.addEventListener("focusin", (e) => {
   if (e.target.id === "ch-subject") ui.chase.target = "subject";
   else if (e.target.id === "ch-body") ui.chase.target = "body";
+  else if (e.target.id === "msg-subject") ui.msg.target = "subject";
+  else if (e.target.id === "msg-body") ui.msg.target = "body";
 });
 document.addEventListener("input", (e) => {
   const t = e.target;
   if (t.id === "ch-subject") { ui.chase.subject = t.value; updatePreview(); }
   else if (t.id === "ch-body") { ui.chase.body = t.value; updatePreview(); }
+  // Editing makes it a new message, with its own send id
+  else if (t.id === "msg-subject") { ui.msg.subject = t.value; ui.msg.reqId = null; updateMsgPreview(); }
+  else if (t.id === "msg-body") { ui.msg.body = t.value; ui.msg.reqId = null; updateMsgPreview(); }
 });
 document.addEventListener("change", (e) => {
   const t = e.target;
+  if (t.name === "msg-aud") { ui.msg.audience = t.value; ui.msg.reqId = null; renderMessage(); return; }
   if (t.id === "ch-enabled") { ui.chase.enabled = t.checked; updateDirty(); return; }
   if (t.dataset && t.dataset.slot != null && t.closest("#chase")) {
     const i = Number(t.dataset.slot), s = ui.chase.slots[i];
@@ -1898,7 +2062,7 @@ inviteForm.addEventListener("submit", async (e) => {
 
 // Re-drawing replaces buttons, so each of these hands focus on to the matching new control
 renderAll = keepFocus(renderAll); renderWeek = keepFocus(renderWeek); renderWkTeams = keepFocus(renderWkTeams);
-renderOverride = keepFocus(renderOverride); renderChase = keepFocus(renderChase); renderPlayers = keepFocus(renderPlayers); renderClubs = keepFocus(renderClubs);
+renderOverride = keepFocus(renderOverride); renderChase = keepFocus(renderChase); renderMessage = keepFocus(renderMessage); renderPlayers = keepFocus(renderPlayers); renderClubs = keepFocus(renderClubs);
 function keepFocus(fn) { return (...a) => withFocus(() => fn(...a)); }
 
 /* ---------- Start ---------- */

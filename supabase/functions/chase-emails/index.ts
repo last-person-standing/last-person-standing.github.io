@@ -5,6 +5,9 @@
 //   mode "now":  a host taps "Send chase now" (sends regardless of the schedule).
 //   mode "test": a host taps "Send me a test" (one email, to that host only).
 // Nothing is ever sent in a Week off, after the deadline, or twice for the same slot.
+//
+// Also, mode "message": a host's own email to everyone signed up, or to everyone in a game.
+// Not a chase: no schedule or deadline rules. Replies go to the host who sent it.
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const cors = {
@@ -63,6 +66,20 @@ export function fill(template: string, vars: Record<string, string>) {
   return template.replace(/\{(name|deadline|gameweek|link)\}/g, (_, k) => vars[k] ?? "");
 }
 
+// A host's message only has {name} and {link}
+export function fillMessage(template: string, vars: { name: string; link: string }) {
+  return template.replace(/\{(name|link)\}/g, (_, k: "name" | "link") => vars[k]);
+}
+
+// ...and ends with a sign-off so people know who it's from
+export function messageText(body: string, vars: { name: string; link: string }, from: string) {
+  return `${fillMessage(body, vars)}\n\n--\nSent by ${from} via Last Person Standing`;
+}
+
+export function isUuid(s: unknown) {
+  return typeof s === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+}
+
 const esc = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
@@ -93,7 +110,10 @@ export function sameSecret(a: string, b: string) {
 // Brevo errors that mean "stop trying" (bad key, out of credits, blocked, rate limited)
 class StopSending extends Error {}
 
-async function sendEmail(to: { email: string; name: string }, subject: string, text: string, link: string) {
+async function sendEmail(
+  to: { email: string; name: string }, subject: string, text: string, link: string,
+  replyTo?: { email: string; name: string },
+) {
   const res = await fetch("https://api.brevo.com/v3/smtp/email", {
     method: "POST",
     headers: {
@@ -107,6 +127,7 @@ async function sendEmail(to: { email: string; name: string }, subject: string, t
         name: Deno.env.get("BREVO_SENDER_NAME") || "Last Person Standing",
       },
       to: [{ email: to.email, name: to.name }],
+      ...(replyTo ? { replyTo } : {}),
       subject: subject.replace(/[\r\n]+/g, " ").slice(0, 200),
       textContent: text,
       htmlContent: toHtml(text, link),
@@ -116,6 +137,82 @@ async function sendEmail(to: { email: string; name: string }, subject: string, t
     const msg = `Brevo said ${res.status}: ${(await res.text()).slice(0, 200)}`;
     throw [401, 402, 403, 429].includes(res.status) ? new StopSending(msg) : new Error(msg);
   }
+}
+
+// A host's message to the group. The request id is claimed in message_log first, so tapping
+// Send again after a lost connection can never email everyone twice.
+// deno-lint-ignore no-explicit-any
+async function sendMessage(admin: any, host: { id: string; email: string; name: string }, body: any, link: string) {
+  const audience = String(body.audience ?? "");
+  const subject = String(body.subject ?? "").replace(/[\r\n]+/g, " ").trim();
+  const text = String(body.body ?? "").trim();
+  const gameId = body.game_id == null ? null : Number(body.game_id);
+  if (audience !== "everyone" && audience !== "game") return json({ error: "Choose who to send the message to." }, 400);
+  if (audience === "game" && !Number.isInteger(gameId)) return json({ error: "Choose a game." }, 400);
+  if (!subject || subject.length > 200) return json({ error: "Enter a subject (up to 200 characters)." }, 400);
+  if (!text || text.length > 5000) return json({ error: "Enter a message (up to 5,000 characters)." }, 400);
+  if (!isUuid(body.request_id)) return json({ error: "Please refresh the page and try again." }, 400);
+  if (/\{link\}/.test(subject + text) && !linkOk(link)) {
+    return json({ error: "The site link isn't set. Open Host → Settings on the live site and tap Save, or remove {link}." }, 400);
+  }
+
+  const { data: t, error: tErr } = await admin.rpc("message_targets", { p_audience: audience, p_game_id: gameId });
+  if (tErr) return json({ error: tErr.message }, 400);
+  const players = t.players as { email: string; name: string }[];
+  if (!players.length) return json({ error: "There's nobody to send it to yet." }, 400);
+
+  const { data: row, error: cErr } = await admin.from("message_log").insert({
+    request_id: body.request_id, sent_by: host.id, sender_name: host.name || host.email,
+    audience, game_name: t.game_name, subject, body: text,
+  }).select("id").single();
+  if (cErr) {
+    if (cErr.code === "23505") {
+      const { data: prev } = await admin.from("message_log")
+        .select("status, recipients").eq("request_id", body.request_id).maybeSingle();
+      return json({ already: true, status: prev?.status ?? "sending", sent: prev?.recipients ?? 0 });
+    }
+    throw new Error(`Couldn't log the message (${cErr.message})`);
+  }
+
+  const from = host.name || "the host";
+  const replyTo = { email: host.email, name: host.name || host.email };
+  const started = Date.now();
+  let sent = 0;
+  let stopped = "";
+  const failed: string[] = [];
+
+  async function one(p: { email: string; name: string }) {
+    if (stopped) return;
+    const vars = { name: p.name || "there", link };
+    try {
+      await sendEmail(p, fillMessage(subject, vars), messageText(text, vars, from), link, replyTo);
+      sent++;
+    } catch (e) {
+      if (e instanceof StopSending) stopped = e.message;
+      failed.push(`${p.name || p.email}: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+
+  for (let i = 0; i < players.length && !stopped; i += 5) {
+    if (Date.now() - started > 110_000) {
+      stopped = `Stopped early to stay within the time limit; ${players.length - i} not emailed.`;
+      break;
+    }
+    await Promise.all(players.slice(i, i + 5).map(one));
+  }
+
+  // Nothing went out at all: forget the claim so the same message can be sent again
+  if (sent === 0) await admin.from("message_log").delete().eq("id", row.id);
+  else await admin.from("message_log").update({ recipients: sent, failed: players.length - sent, status: "sent" }).eq("id", row.id);
+
+  return json({
+    ok: !stopped && failed.length === 0,
+    sent,
+    total: players.length,
+    failed: players.length - sent,
+    errors: failed.slice(0, 5),
+    stopped: stopped || undefined,
+  });
 }
 
 Deno.serve(async (req) => {
@@ -128,20 +225,20 @@ Deno.serve(async (req) => {
     const mode = String(body.mode ?? "cron");
 
     // Who is calling?
-    let host: { email: string; name: string } | null = null;
+    let host: { id: string; email: string; name: string } | null = null;
     if (mode === "cron") {
       const secret = Deno.env.get("CRON_SECRET");
       if (!secret || !sameSecret(req.headers.get("x-cron-secret") ?? "", secret)) {
         return json({ error: "Not allowed." }, 401);
       }
-    } else if (mode === "now" || mode === "test") {
+    } else if (mode === "now" || mode === "test" || mode === "message") {
       const token = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
       const { data: { user } } = await admin.auth.getUser(token);
       if (!user) return json({ error: "Please log in again." }, 401);
       const { data: me } = await admin
         .from("profiles").select("role, email, display_name").eq("id", user.id).single();
       if (me?.role !== "host") return json({ error: "Only hosts can send emails." }, 403);
-      host = { email: me.email, name: me.display_name };
+      host = { id: user.id, email: me.email, name: me.display_name };
     } else {
       return json({ error: "Unknown mode." }, 400);
     }
@@ -152,6 +249,7 @@ Deno.serve(async (req) => {
 
     const { data: settings, error: sErr } = await admin.from("email_settings").select("*").single();
     if (sErr || !settings) throw new Error("Couldn't read the email settings.");
+    if (mode === "message") return await sendMessage(admin, host!, body, settings.pick_url || "");
     const now = ukNow(new Date());
 
     if (mode === "cron") {

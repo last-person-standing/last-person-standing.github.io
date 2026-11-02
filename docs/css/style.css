@@ -506,6 +506,12 @@ dialog.sheet {
 #chase .chips { margin-bottom: 4px; }
 .sends { list-style: none; margin: 0; padding: 0; }
 .sends li { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.sends summary { cursor: pointer; overflow-wrap: anywhere; }
+.sends details .pv-body { margin-top: 8px; padding: 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; }
+.msg-aud { border: 0; padding: 0; margin: 0 0 4px; min-width: 0; }
+.msg-aud legend { font-weight: 700; margin-bottom: 4px; }
+#message button.full { margin-top: 4px; }
+#message .chips { margin-bottom: 4px; }
 
 /* Host: "awaiting payment" notice above the tabs */
 .notice { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap;
