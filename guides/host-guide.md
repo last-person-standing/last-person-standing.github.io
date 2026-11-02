@@ -4,6 +4,7 @@
 
 ## Before a game
 1. **New players** sign up themselves from the link. They show as **Awaiting payment**.
+   - A banner at the top of the Host screen shows how many are waiting, and how many are new since you last looked. Tap **View** to see them.
 2. **When someone pays you:**
    - Host → **Players**, then tap their name.
    - Match the bank reference (e.g. `LPS-12-SAM`) to the player.
