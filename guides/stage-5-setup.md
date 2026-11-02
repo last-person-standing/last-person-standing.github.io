@@ -90,6 +90,7 @@ Remove the extra send time from test 4 afterwards, and switch emails back on.
 - **"Email isn't set up yet":** a secret is missing or misspelt (step 4). After adding secrets, re-deploy the function.
 - **"Brevo said 401" or "unrecognised IP":** check the API key, and that Authorised IPs blocking is off (step 2).
 - **Test works but scheduled emails never arrive:** run the "See the function's replies" check at the bottom of `008_schedule_chase.sql`.
+  - `"No API key found in request"`: the saved Project URL has something after `.supabase.co` (e.g. `/rest/v1`). Re-run `008_schedule_chase.sql`, which now strips it.
   - `{"error":"Not allowed."}`: the two cron secrets don't match. Re-run `008_schedule_chase.sql` with the same value as the `CRON_SECRET` function secret. Check there are no spaces at either end of the secret.
   - Status **401** with a message about a JWT or authorization: "Verify JWT" is still on for `chase-emails` (step 5). The host buttons still work in this case, because they send a login, but the scheduler doesn't.
   - `{"skipped":"The pick link isn't set…"}`: tap **Save** on Host → Settings.

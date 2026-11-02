@@ -17,7 +17,8 @@ declare
   v_url    text := 'https://YOUR-PROJECT-REF.supabase.co';   -- <<< your Project URL
   v_secret text := 'PASTE-THE-SAME-CRON_SECRET-HERE';         -- <<< same value as the CRON_SECRET function secret
 begin
-  v_url := rtrim(trim(v_url), '/');
+  -- Keep just https://xxxx.supabase.co, even if /rest/v1 or similar was copied with it
+  v_url := regexp_replace(trim(v_url), '^(https://[^/]+).*$', '\1');
   v_secret := trim(v_secret);
   if v_url like '%YOUR-PROJECT-REF%' or v_secret like 'PASTE-%' then
     raise exception 'Replace the two values marked <<< first.';
