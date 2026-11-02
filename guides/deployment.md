@@ -2,8 +2,8 @@
 
 Everything is free. Allow about 1½ hours the first time. Do the steps in order; each links to the detailed guide.
 
-**The live site:** https://jasonvincent10.github.io/last-person-standing/
-**The code:** https://github.com/jasonvincent10/last-person-standing
+**The live site:** https://last-person-standing.github.io/
+**The code:** https://github.com/last-person-standing/last-person-standing.github.io
 
 ## What lives where
 
@@ -29,11 +29,11 @@ Everything is free. Allow about 1½ hours the first time. Do the steps in order;
 ### B. Put the site live
 1. **Push your `config.js` change to GitHub.** In VS Code: click the **Source Control** icon on the left (it looks like a branch). Type a message such as `Add Supabase settings`, click **Commit**, then **Sync Changes**.
    *Or ask me to commit and push it for you.*
-2. **Wait 1–2 minutes**, then open https://jasonvincent10.github.io/last-person-standing/. You should see the login page.
+2. **Wait 1–2 minutes**, then open https://last-person-standing.github.io/. You should see the login page.
    *To check progress: GitHub repo → **Actions** tab → "pages build and deployment" should show a green tick.*
 3. **Tell Supabase about the live address.** Supabase → **Authentication → URL Configuration**:
-   - **Site URL:** `https://jasonvincent10.github.io/last-person-standing/`
-   - **Redirect URLs** → add `https://jasonvincent10.github.io/last-person-standing/**`
+   - **Site URL:** `https://last-person-standing.github.io/`
+   - **Redirect URLs** → add `https://last-person-standing.github.io/**`
    - Keep the `http://localhost:8000/**` entry for testing on your PC.
 - [ ] Live login page loads on your phone
 - [ ] Supabase URL Configuration updated
@@ -68,7 +68,7 @@ After that it runs every 3 days on its own. If it ever fails, GitHub emails you.
 
 ## Going live with the group
 1. Make sure the real host(s) are set up and the payment details are correct.
-2. Share **https://jasonvincent10.github.io/last-person-standing/** in the group chat with a line like:
+2. Share **https://last-person-standing.github.io/** in the group chat with a line like:
    > *Sign up here, then pay £5 per game using the reference shown on your page. Check your spam folder for the confirmation email and mark it "Not spam".*
 3. As payments arrive, the host adds credit. When ready, the host taps **Start new game**.
 

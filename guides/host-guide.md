@@ -1,6 +1,6 @@
 # Host guide: Last Person Standing
 
-**Site:** https://jasonvincent10.github.io/last-person-standing/. Log in, then tap **Host**.
+**Site:** https://last-person-standing.github.io/. Log in, then tap **Host**.
 
 ## Before a game
 1. **New players** sign up themselves from the link. They show as **Awaiting payment**.
