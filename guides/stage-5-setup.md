@@ -40,6 +40,7 @@ Supabase → **Edge Functions** → **Secrets** (sometimes under *Manage secrets
 | `BREVO_SENDER_EMAIL` | the sender address you verified in Brevo (Stage 1) |
 | `BREVO_SENDER_NAME` | `Last Person Standing` |
 | `CRON_SECRET` | the random value from step 3 |
+| `BREVO_REPLY_TO` | *(optional)* where replies to chase emails go, e.g. the main host's email. Without it, replies go to the sender address |
 
 > Secrets live only on Supabase's servers. They're never in the website or on GitHub.
 
@@ -94,10 +95,17 @@ Remove the extra send time from test 4 afterwards, and switch emails back on.
   - `{"error":"Not allowed."}`: the two cron secrets don't match. Re-run `008_schedule_chase.sql` with the same value as the `CRON_SECRET` function secret. Check there are no spaces at either end of the secret.
   - Status **401** with a message about a JWT or authorization: "Verify JWT" is still on for `chase-emails` (step 5). The host buttons still work in this case, because they send a login, but the scheduler doesn't.
   - `{"skipped":"The pick link isn't set…"}`: tap **Save** on Host → Settings.
-- **Emails land in spam:** expected sometimes without your own domain. Ask players to mark it "Not spam".
+- **Emails land in spam:** check the sender is on an authenticated domain (below), not a free address like iCloud or Gmail.
 
-## Changing the sender later (e.g. to Rog's email)
+## The sender: lps@vopria.com
 
-1. Brevo → **Senders** → add Rog's address. Rog clicks the confirmation link Brevo sends him.
-2. Supabase → Edge Functions → Secrets → change `BREVO_SENDER_EMAIL` to Rog's address.
-3. Supabase → Authentication → Emails → SMTP Settings → change **Sender email** to Rog's address (this covers sign-up and password emails).
+All app emails come from `lps@vopria.com`. vopria.com is authenticated in Brevo (Brevo code, two DKIM records and DMARC, added in Spaceship), so Gmail and Outlook trust it. A sender on a free address (iCloud, Gmail) lands in spam.
+
+The sender is set in two places:
+1. Supabase → Edge Functions → Secrets → `BREVO_SENDER_EMAIL` (chase emails and Message players).
+2. Supabase → Authentication → Emails → SMTP Settings → **Sender email** (sign-up and password emails). Change this in a private window: browser autofill can swap it back to your own email.
+
+## Where replies go
+
+- **Message players:** to the host who sent it. Nothing to set.
+- **Chase emails:** to `BREVO_REPLY_TO`. Change it to Rog's email when he takes over, then re-deploy the function to be safe.

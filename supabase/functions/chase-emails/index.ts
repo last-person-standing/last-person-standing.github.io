@@ -107,6 +107,13 @@ export function sameSecret(a: string, b: string) {
 }
 // @helpers-end
 
+// Where replies to chase emails go (e.g. "Arsenal please"). Optional secret; without it,
+// replies go to the sender address.
+function chaseReplyTo(): { email: string; name: string } | undefined {
+  const email = (Deno.env.get("BREVO_REPLY_TO") ?? "").trim();
+  return email ? { email, name: Deno.env.get("BREVO_SENDER_NAME") || "Last Person Standing" } : undefined;
+}
+
 // Brevo errors that mean "stop trying" (bad key, out of credits, blocked, rate limited)
 class StopSending extends Error {}
 
@@ -270,7 +277,7 @@ Deno.serve(async (req) => {
         link,
       };
       const text = fill(settings.body, vars);
-      await sendEmail(host!, `[TEST] ${fill(settings.subject, vars)}`, text, link);
+      await sendEmail(host!, `[TEST] ${fill(settings.subject, vars)}`, text, link, chaseReplyTo());
       return json({ ok: true, sent: 1, to: host!.email });
     }
 
@@ -308,7 +315,7 @@ Deno.serve(async (req) => {
 
       const personal = { ...vars, name: p.name };
       try {
-        await sendEmail(p, fill(settings.subject, personal), fill(settings.body, personal), link);
+        await sendEmail(p, fill(settings.subject, personal), fill(settings.body, personal), link, chaseReplyTo());
         sent++;
       } catch (e) {
         if (e instanceof StopSending) stopped = e.message;
