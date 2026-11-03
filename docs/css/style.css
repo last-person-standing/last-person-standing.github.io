@@ -518,3 +518,17 @@ dialog.sheet {
   border-left: 6px solid #c99a1c; padding: 12px 16px; }
 .notice p { margin: 0; flex: 1 1 200px; }
 .notice .muted { display: block; margin-top: 2px; }
+
+/* "Built by Vopria" badge, bottom right (same as the LPE1 app) */
+.vopria-badge {
+  position: fixed; right: 16px; bottom: calc(14px + env(safe-area-inset-bottom)); z-index: 15;
+  display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px 5px 6px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 999px;
+  color: var(--muted); font-size: 12px; text-decoration: none; opacity: .75; transition: opacity .15s, border-color .15s;
+}
+.vopria-badge:hover { opacity: 1; border-color: #cbbcf7; }
+.vopria-badge img { width: 18px; height: 18px; display: block; }
+.vopria-badge strong { color: var(--ink); font-weight: 600; }
+body.has-bar .vopria-badge { display: none; }
+.page, .auth { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
+@media print { .vopria-badge { display: none; } }
