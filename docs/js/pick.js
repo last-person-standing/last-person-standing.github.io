@@ -13,6 +13,18 @@ $("#hello").textContent = `Hello, ${me.display_name}`;
 $("#credit").textContent =
   `Credit: ${me.credit} game${me.credit === 1 ? "" : "s"}${me.role === "host" ? " · You are a host" : ""}`;
 
+$("#deactivate").addEventListener("click", async (e) => {
+  if (!confirm("Delete your account? You'll be removed from every game, lose any credit, and stop getting emails. This can't be undone.")) return;
+  e.target.disabled = true;
+  const { error } = await sb.rpc("deactivate_my_account");
+  if (error) {
+    e.target.disabled = false;
+    return say($("#deactivate-msg"), error.message, "error");
+  }
+  await sb.auth.signOut({ scope: "local" });
+  location.replace("index.html");
+});
+
 let state = null;          // latest my_game_state
 let teams = [];            // every team row (run chips need inactive ones too)
 let offset = 0;            // server time minus phone time, in ms

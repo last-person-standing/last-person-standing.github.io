@@ -49,6 +49,7 @@ Everything is free. Allow about 1½ hours the first time. Do the steps in order;
 - [ ] `008_schedule_chase.sql` run with your two values, then the saved query deleted
 - [ ] On the **live** site: Host → Settings → Chase emails → **Save** (so emails link to the live site) → **Send me a test email**
 - [ ] Message players: `009_messages.sql` run, and the `chase-emails` function re-deployed with the latest code (the same function sends both)
+- [ ] Deactivate account: `010_deactivate_account.sql` run
 
 ### E. Keep-alive (stops Supabase pausing over breaks)
 Already set up in `.github/workflows/keep-alive.yml`. It switches itself on once `config.js` has your real details.
