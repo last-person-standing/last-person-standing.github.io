@@ -13,12 +13,19 @@ $("#hello").textContent = `Hello, ${me.display_name}`;
 $("#credit").textContent =
   `Credit: ${me.credit} game${me.credit === 1 ? "" : "s"}${me.role === "host" ? " · You are a host" : ""}`;
 
-$("#deactivate").addEventListener("click", async (e) => {
-  if (!confirm("Delete your account? You'll be removed from every game, lose any credit, and stop getting emails. This can't be undone.")) return;
+// Asked on the page, not with confirm(): some in-app browsers silently block pop-ups
+const askDeactivate = (open) => {
+  $("#deactivate").hidden = open;
+  $("#deactivate-confirm").hidden = !open;
+};
+$("#deactivate").addEventListener("click", () => askDeactivate(true));
+$("#deactivate-no").addEventListener("click", () => askDeactivate(false));
+$("#deactivate-yes").addEventListener("click", async (e) => {
   e.target.disabled = true;
   const { error } = await sb.rpc("deactivate_my_account");
   if (error) {
     e.target.disabled = false;
+    askDeactivate(false);
     return say($("#deactivate-msg"), error.message, "error");
   }
   await sb.auth.signOut({ scope: "local" });

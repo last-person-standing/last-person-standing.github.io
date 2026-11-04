@@ -35,6 +35,13 @@
       <p class="muted small">Deactivating deletes your account and you won't get any more emails.</p>
       <p id="deactivate-msg" class="msg" role="alert"></p>
       <button type="button" class="danger" id="deactivate">Deactivate account</button>
+      <div id="deactivate-confirm" hidden>
+        <p><strong>Delete your account?</strong> You'll be removed from every game, lose any credit, and stop getting emails. This can't be undone.</p>
+        <div class="dlg-buttons">
+          <button type="button" class="secondary" id="deactivate-no">Cancel</button>
+          <button type="button" class="danger" id="deactivate-yes">Yes, delete it</button>
+        </div>
+      </div>
     </section>
   </main>
   <a class="vopria-badge" href="https://vopria.com" target="_blank" rel="noopener" title="Built by Vopria"><img src="img/vopria-mark.svg" alt=""><span>Built by <strong>Vopria</strong></span></a>
@@ -51,6 +58,6 @@
     </div>
   </div>
 
-  <script type="module" src="js/pick.js"></script>
+  <script type="module" src="js/pick.js?v=2"></script>
 </body>
 </html>
