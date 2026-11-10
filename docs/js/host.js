@@ -95,7 +95,7 @@ function summaryText(inCount, outCount, losing, noPick) {
   return `${inCount} in, ${outCount} out this week${parts.length ? `: ${parts.join(", ")}` : ""}`;
 }
 
-// The email drafted for the host when a game ends. [date] is for the host to fill in.
+// The email drafted for the host when a game ends, for everyone signed up. [date] is for the host to fill in.
 const NEXT_DATE = "[date]";
 function winnerDraft(game, gameweek, winners) {
   const n = winners.length;
@@ -2072,7 +2072,7 @@ const FORMS = {
       title: "End the game?",
       body: `<p>${ids.length ? `<strong>${plural(ids.length, "winner")}</strong>: ${names.join(", ")}.` : "<strong>No winners selected.</strong>"}</p>
         <p>This closes ${escapeHtml(D.active.name)}. It can't be undone.</p>
-        <p class="muted small">Next you'll get a winner announcement to edit and email to everyone in the game. Nothing is sent until you tap Send.${unsent ? " It replaces the unsent message on the Players tab." : ""}</p>`,
+        <p class="muted small">Next you'll get a winner announcement to edit and email to everyone signed up. Nothing is sent until you tap Send.${unsent ? " It replaces the unsent message on the Players tab." : ""}</p>`,
       ok: "End game", danger: true,
     });
     if (!yes) return;
@@ -2080,7 +2080,8 @@ const FORMS = {
       await rpc("host_end_game", { p_winner_ids: ids, p_note: note || null });
       ui.startResult = null;
       ui.end = { gameId: null, ticks: new Set(), note: "", touched: false };
-      Object.assign(ui.msg, { audience: "game", ...draft, target: "body", reqId: null, result: null, win: true });
+      // To everyone signed up, not just this game's players: it also announces the next game
+      Object.assign(ui.msg, { audience: "everyone", ...draft, target: "body", reqId: null, result: null, win: true });
     }, "Game ended. The winner announcement is ready to edit and send.");
     // Take the host straight to the announcement
     if (done && D.audience) {
