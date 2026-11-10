@@ -101,6 +101,8 @@ function summaryText(inCount, outCount, losing, noPick) {
 const D = { offset: 0, settings: {} };   // everything fetched from the database
 const ui = {
   tab: "week",
+  roundId: null,   // the gameweek shown on the This week tab (matters when two are open)
+  dhOpen: false,   // "Double header" section expanded?
   week: { gwId: null, stale: false, mode: "normal", deadline: "", origDeadline: "", custom: new Set(), q: "", lg: "ALL", nlOpen: false },
   ov: { q: "", player: null, league: null, selected: null, used: new Map() },
   next: { mode: "normal", deadline: "", def: "" },
@@ -306,7 +308,24 @@ async function act(btn, fn, okText, { light = false } = {}) {
 
 const must = (r) => { if (r.error) throw r.error; return r.data; };
 
+// The gameweeks on the This week tab: every open one, plus a confirmed one that overlapped a
+// gameweek still open (the other half of a double header). With none open, the last one confirmed.
+function roundsToShow() {
+  if (!D.gws.length) return [];
+  const t = (x) => Date.parse(x);
+  if (!D.open.length) {
+    const done = D.gws.filter((g) => g.resulted_at).sort((a, b) => t(b.resulted_at) - t(a.resulted_at) || b.number - a.number);
+    return [done[0] || D.gws[D.gws.length - 1]];
+  }
+  return D.gws.filter((g) => g.status === "open"
+    || (g.resulted_at && D.open.some((o) => o.opened_at && t(o.opened_at) < t(g.resulted_at))));
+}
+// Tells the server which gameweek an action is for (once the double-header database update is in)
+const gwArg = () => (D.cur && "opened_at" in D.cur ? { p_gameweek_id: D.cur.id } : {});
+const nextNumber = () => Math.max(0, ...D.gws.map((g) => g.number)) + 1;
+
 async function load() {
+  const asked = ui.roundId;
   const [st, settings, profiles, teams, games, wins, mail, aud, msgs] = await Promise.all([
     sb.rpc("my_game_state"),   // only used for the server clock
     sb.from("app_settings").select("*").single(),
@@ -332,24 +351,29 @@ async function load() {
   for (const w of must(wins)) (D.winners.get(w.game_id) || D.winners.set(w.game_id, []).get(w.game_id)).push(w.player_id);
 
   D.active = D.games.find((g) => g.status === "active") || null;
-  D.gws = []; D.entries = []; D.picks = []; D.allowed = new Set(); D.cur = null; D.emailLog = { slots: [], recent_players: 0 };
+  D.gws = []; D.open = []; D.rounds = []; D.entries = []; D.picks = []; D.picksAll = []; D.allowed = new Set(); D.cur = null; D.emailLog = { slots: [], recent_players: 0 };
   if (D.active) {
-    D.gws = must(await sb.from("gameweeks").select("id,game_id,number,mode,deadline,status")
-      .eq("game_id", D.active.id).order("number"));
-    D.cur = D.gws.find((g) => g.status === "open") || D.gws[D.gws.length - 1] || null;
+    D.gws = must(await sb.from("gameweeks").select("*").eq("game_id", D.active.id).order("number"));
+    D.open = D.gws.filter((g) => g.status === "open");
+    D.rounds = roundsToShow();
+    D.cur = D.rounds.find((g) => g.id === ui.roundId) || D.open[0] || D.rounds[D.rounds.length - 1] || null;
+    const ids = [...new Set([...D.open, ...(D.cur ? [D.cur] : [])].map((g) => g.id))];
     const [en, pk, gt] = await Promise.all([
       sb.from("game_entries").select("player_id,status,out_gameweek_id").eq("game_id", D.active.id),
-      D.cur ? sb.from("picks").select("player_id,team_id,result,reopen_deadline").eq("gameweek_id", D.cur.id) : { data: [] },
+      ids.length ? sb.from("picks").select("gameweek_id,player_id,team_id,result,reopen_deadline").in("gameweek_id", ids) : { data: [] },
       D.cur ? sb.from("gameweek_teams").select("team_id").eq("gameweek_id", D.cur.id) : { data: [] },
     ]);
     D.entries = must(en);
-    D.picks = must(pk);
+    D.picksAll = must(pk);   // every open gameweek's picks (the chase count needs both)
+    D.picks = D.cur ? D.picksAll.filter((p) => p.gameweek_id === D.cur.id) : [];
     D.allowed = new Set(must(gt).map((r) => r.team_id));
     if (D.cur) {
       const log = await sb.rpc("email_log_summary");
       D.emailLog = log.error || !log.data ? null : log.data;   // { slots, recent_players }; null = couldn't load
     }
   }
+  // Remember the gameweek shown, unless the host tapped the other one while this was loading
+  if (ui.roundId === asked) ui.roundId = D.cur ? D.cur.id : null;
   index();
   lastLoad = Date.now();
 }
@@ -366,10 +390,11 @@ function index() {
 async function refreshWeek() {
   const [en, pk] = await Promise.all([
     sb.from("game_entries").select("player_id,status,out_gameweek_id").eq("game_id", D.active.id),
-    sb.from("picks").select("player_id,team_id,result,reopen_deadline").eq("gameweek_id", D.cur.id),
+    sb.from("picks").select("gameweek_id,player_id,team_id,result,reopen_deadline").eq("gameweek_id", D.cur.id),
   ]);
   D.entries = must(en);
   D.picks = must(pk);
+  D.picksAll = [...D.picksAll.filter((p) => p.gameweek_id !== D.cur.id), ...D.picks];
   index();
   renderWeek();
   renderPlayers();
@@ -557,10 +582,46 @@ function renderWeek() {
   if (ph === "before") body = beforeHtml();
   else if (ph === "results") body = resultsHtml();
   else body = doneHtml();
-  el.innerHTML = head + body;
+  el.innerHTML = switchHtml() + head + body + alongsideHtml();
   renderWkTeams();
   renderOverride();
   tick();
+}
+
+// Two gameweeks on the go: choose which one this tab is showing
+function switchHtml() {
+  if (D.rounds.length < 2) return "";
+  const now = nowMs();
+  const what = (g) => g.status === "resulted" ? "Results confirmed" : g.mode === "off" ? "Week off"
+    : now < Date.parse(g.deadline) ? "Open for picks" : "Locked";
+  return `
+    <section class="card">
+      <h2>Two gameweeks on the go</h2>
+      <p class="muted small">Players need a winning pick in both to stay in. Everything below is for the gameweek chosen here.</p>
+      <div class="chips" role="group" aria-label="Choose a gameweek">
+        ${D.rounds.map((g) => chip("round", "id", g.id, `GW${g.number} · ${what(g)}`, g.id === D.cur.id)).join("")}
+      </div>
+    </section>`;
+}
+
+// Double header: open a second gameweek next to the one that is open
+function alongsideHtml() {
+  if (!D.cur || !("opened_at" in D.cur) || D.open.length !== 1) return "";
+  const n = nextNumber(), first = D.open[0].number;
+  return `
+    <details class="card dh" id="dh"${ui.dhOpen ? " open" : ""}>
+      <summary>Double header: open a second gameweek</summary>
+      <form data-form="next-gw" data-alongside="1" novalidate>
+        <p class="muted small">Opens Gameweek ${n} alongside Gameweek ${first}, for example a Champions League night on top of the weekend.
+          Each gameweek has its own deadline, picks and results. Players need a winning pick in both to stay in, and can still only use each club once.</p>
+        ${segHtml("nx-mode", ui.next.mode)}
+        <p class="muted small" id="nx-hint">${ui.next.mode === "custom" ? "After opening it, choose the allowed clubs on this tab." : ""}</p>
+        <label>Deadline (UK time)
+          <input type="datetime-local" id="nx-deadline" value="${escapeHtml(ui.next.deadline)}">
+        </label>
+        <button type="submit" class="go full">Open gameweek ${n} alongside</button>
+      </form>
+    </details>`;
 }
 
 /* before the deadline */
@@ -728,7 +789,7 @@ function doneHtml() {
       The game can be ended on the Game tab.
       <p><button type="button" class="go" data-goto="game">Go to the Game tab</button></p>
     </section>` : "";
-  const nextForm = s.alive === 0 ? "" : `
+  const nextForm = s.alive === 0 || D.open.length ? "" : `
     <form class="card" data-form="next-gw" novalidate>
       <h2>Open next gameweek</h2>
       ${segHtml("nx-mode", ui.next.mode)}
@@ -736,7 +797,7 @@ function doneHtml() {
       <label>Deadline (UK time)
         <input type="datetime-local" id="nx-deadline" value="${escapeHtml(ui.next.deadline)}">
       </label>
-      <button type="submit" class="go big full">Open gameweek ${D.cur.number + 1}</button>
+      <button type="submit" class="go big full">Open gameweek ${nextNumber()}</button>
     </form>`;
   return summary + few + nextForm + `
     <p class="center"><button type="button" class="link" data-act="undo">Undo these results</button></p>`;
@@ -1183,9 +1244,13 @@ function chaseDirty() {
 // Players who would get a chase right now: still in, no pick, open week that isn't a week off
 function chaseTargets() {
   if (!D.active || !D.cur) return { n: 0, why: "No game is running." };
-  if (D.cur.mode === "off") return { n: 0, why: "This gameweek is a Week off." };
-  if (phase() !== "before") return { n: 0, why: "Picks have locked for this gameweek." };
-  const n = aliveEntries().filter((e) => { const pk = D.pkBy.get(e.player_id); return !(pk && pk.team_id != null); }).length;
+  const live = D.open.filter((g) => g.mode !== "off");
+  if (D.open.length && !live.length) return { n: 0, why: "This gameweek is a Week off." };
+  const now = nowMs();
+  const due = live.filter((g) => now < Date.parse(g.deadline));   // still open for picks
+  if (!due.length) return { n: 0, why: "Picks have locked for this gameweek." };
+  const has = new Set(D.picksAll.filter((p) => p.team_id != null).map((p) => `${p.gameweek_id}|${p.player_id}`));
+  const n = aliveEntries().filter((e) => due.some((g) => !has.has(`${g.id}|${e.player_id}`))).length;
   return { n, why: n ? "" : "Everyone still in has picked." };
 }
 
@@ -1564,7 +1629,7 @@ async function reopenDialog({ title, intro, ids, ticked }) {
   // Only players still showing in the list count, so a search can't leave hidden ticks behind
   const players = picked(root);
   const deadline = ukLocalToIso($("#rp-deadline", root).value);
-  await act(null, () => rpc("host_reopen_picks", { p_player_ids: players, p_deadline: deadline }),
+  await act(null, () => rpc("host_reopen_picks", { p_player_ids: players, p_deadline: deadline, ...gwArg() }),
     (n) => `${plural(Number(n) || players.length, "player")} can pick again until ${fmtDeadline(deadline)}.`);
 }
 // Live "N selected" on the dialog's button (counts ticked rows that are showing)
@@ -1611,7 +1676,7 @@ async function saveWeek(btn) {
     if (!yes) return;
   }
   await act(btn, async () => {
-    const r = await rpc("host_update_gameweek", { p_mode: w.mode, p_deadline: deadline, p_team_ids: w.mode === "custom" ? [...w.custom] : null });
+    const r = await rpc("host_update_gameweek", { p_mode: w.mode, p_deadline: deadline, p_team_ids: w.mode === "custom" ? [...w.custom] : null, ...gwArg() });
     w.stale = true;
     return r;
   }, (r) => {
@@ -1630,7 +1695,7 @@ async function confirmResults(btn) {
     ok: "Confirm results", danger: true,
   });
   if (!yes) return;
-  await act(btn, () => rpc("host_confirm_results"),
+  await act(btn, () => rpc("host_confirm_results", gwArg()),
     (r) => `Results confirmed: ${r.out} out, ${r.still_in} still in.`);
 }
 
@@ -1705,6 +1770,18 @@ const ACTIONS = {
     catch { flash("Couldn't refresh. Please check your connection and try again.", "error"); }
     finally { busy = false; if (b.isConnected) b.disabled = false; }
   },
+  round: async (b) => {
+    const id = Number(b.dataset.id);
+    if (id === ui.roundId) return;
+    const was = ui.roundId;
+    ui.roundId = id;
+    ui.ov = { q: "", player: null, league: null, selected: null, used: new Map() };
+    busy = true;
+    pendingKey = focusKey(b);   // keep focus on the gameweek just chosen
+    try { await refresh(); }
+    catch { ui.roundId = was; flash("Couldn't load that gameweek. Please check your connection and try again.", "error"); }
+    finally { busy = false; rescueFocus(); pendingKey = null; }
+  },
   "wk-lg": (b) => { ui.week.lg = b.dataset.lg; renderWeek(); },
   "wk-toggle": (b) => {
     const id = Number(b.dataset.id), c = ui.week.custom;
@@ -1718,7 +1795,7 @@ const ACTIONS = {
   "res-set": (b) => {
     const id = Number(b.dataset.id), target = b.dataset.result;
     const cur = weekStats().teams.find((t) => t.id === id)?.result;
-    return act(b, () => rpc("host_set_team_result", { p_team_id: id, p_result: cur === target ? "pending" : target }), null, { light: true });
+    return act(b, () => rpc("host_set_team_result", { p_team_id: id, p_result: cur === target ? "pending" : target, ...gwArg() }), null, { light: true });
   },
   "res-post": postpone,
   "res-reopen": () => reopenDialog({
@@ -1735,7 +1812,7 @@ const ACTIONS = {
       body: `<p>Anyone knocked out by these results goes back in, and the gameweek reopens so you can fix the results.</p>`,
       ok: "Undo results", danger: true,
     });
-    if (yes) await act(b, () => rpc("host_undo_results"), "Results undone. Fix them below, then confirm again.");
+    if (yes) await act(b, () => rpc("host_undo_results", gwArg()), "Results undone. Fix them below, then confirm again.");
   },
 
   "ov-league": (b) => { ui.ov.league = b.dataset.lg; ui.ov.selected = null; renderOverride(); },
@@ -1745,7 +1822,7 @@ const ACTIONS = {
   "ov-save": (b) => {
     const { player, selected } = ui.ov, t = D.tById.get(selected);
     return act(b, async () => {
-      await rpc("host_set_pick", { p_player: player, p_team_id: selected });
+      await rpc("host_set_pick", { p_player: player, p_team_id: selected, ...gwArg() });
       ui.ov = { q: "", player: null, league: null, selected: null, used: new Map() };
     }, `${prof(player).display_name}'s pick is now ${t.name}.`);
   },
@@ -1757,7 +1834,7 @@ const ACTIONS = {
       ok: "Remove pick", danger: true,
     });
     if (yes) await act(b, async () => {
-      await rpc("host_set_pick", { p_player: player, p_team_id: null });
+      await rpc("host_set_pick", { p_player: player, p_team_id: null, ...gwArg() });
       ui.ov = { q: "", player: null, league: null, selected: null, used: new Map() };
     }, `${name}'s pick was removed.`);
   },
@@ -1855,7 +1932,10 @@ document.addEventListener("change", (e) => {
     ui.end.ticks[t.checked ? "add" : "delete"](t.value);
   }
 });
-document.addEventListener("toggle", (e) => { if (e.target.id === "wk-nl") ui.week.nlOpen = e.target.open; }, true);
+document.addEventListener("toggle", (e) => {
+  if (e.target.id === "wk-nl") ui.week.nlOpen = e.target.open;
+  else if (e.target.id === "dh") ui.dhOpen = e.target.open;
+}, true);
 
 document.addEventListener("focusin", (e) => {
   if (e.target.id === "ch-subject") ui.chase.target = "subject";
@@ -1903,7 +1983,7 @@ const FORMS = {
   },
 
   "next-gw": async (f) => {
-    const n = ui.next;
+    const n = ui.next, alongside = f.dataset.alongside === "1";
     let deadline = null;
     if (n.deadline !== n.def) {
       deadline = ukLocalToIso(n.deadline);
@@ -1911,10 +1991,21 @@ const FORMS = {
       if (Date.parse(deadline) <= nowMs()) return flash("The deadline must be in the future.", "error");
     }
     const mode = n.mode;
+    if (alongside) {
+      const yes = await ask({
+        title: `Open Gameweek ${nextNumber()} alongside Gameweek ${D.open[0]?.number}?`,
+        body: `<p>Players will then need a winning pick in <strong>both</strong> gameweeks to stay in.</p>
+          <p>Deadline: ${escapeHtml(fmtDeadline(deadline || ukLocalToIso(n.def)))} (UK time).</p>`,
+        ok: "Open it",
+      });
+      if (!yes) return;
+    }
     await act($("button[type=submit]", f), async () => {
-      await rpc("host_next_gameweek", { p_mode: mode, p_deadline: deadline });
+      const id = await rpc("host_next_gameweek", { p_mode: mode, p_deadline: deadline, ...(alongside ? { p_alongside: true } : {}) });
       ui.next = { mode: "normal", deadline: "", def: "" };
-    }, () => `Gameweek ${D.cur.number} is open.${mode === "custom" ? " Now choose the allowed clubs." : ""}`);
+      ui.dhOpen = false;
+      if (id != null) ui.roundId = Number(id);   // show the gameweek just opened
+    }, () => `Gameweek ${D.cur.number} is open${alongside ? " alongside" : ""}.${mode === "custom" ? " Now choose the allowed clubs." : ""}`);
   },
 
   "credit-add": (f) => creditForm(f, 1),

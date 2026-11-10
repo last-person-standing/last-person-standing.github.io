@@ -292,8 +292,10 @@ Deno.serve(async (req) => {
       .gte("sent_at", new Date(Date.now() - 60 * 60 * 1000).toISOString());
     if (rErr) throw new Error(rErr.message);
     const recentIds = new Set((recent ?? []).map((r) => r.player_id));
-    const players = (t.players as { id: string; email: string; name: string }[])
-      .filter((p) => !recentIds.has(p.id));
+    // In a double header each player also comes with the gameweek(s) they still need
+    // (e.g. "7 and 8") and their own earliest deadline
+    type Target = { id: string; email: string; name: string; gameweek?: string; deadline?: string };
+    const players = (t.players as Target[]).filter((p) => !recentIds.has(p.id));
 
     // One slot per scheduled hour; "send now" gets its own slot per hour
     const slot = mode === "cron" ? now.key : `manual ${now.key}`;
@@ -303,7 +305,7 @@ Deno.serve(async (req) => {
     let stopped = "";
     const failed: string[] = [];
 
-    async function chase(p: { id: string; email: string; name: string }) {
+    async function chase(p: Target) {
       if (stopped) return;
       // Claim this player's slot first; if it's already logged, they've had this email
       const { data: claimed, error: cErr } = await admin.from("email_log")
@@ -313,7 +315,11 @@ Deno.serve(async (req) => {
       if (cErr) { failed.push(`${p.name}: couldn't log (${cErr.message})`); return; }
       if (!claimed?.length) return;
 
-      const personal = { ...vars, name: p.name };
+      const personal = {
+        ...vars, name: p.name,
+        ...(p.gameweek ? { gameweek: String(p.gameweek) } : {}),
+        ...(p.deadline ? { deadline: ukDeadline(p.deadline) } : {}),
+      };
       try {
         await sendEmail(p, fill(settings.subject, personal), fill(settings.body, personal), link, chaseReplyTo());
         sent++;

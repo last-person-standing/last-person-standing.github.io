@@ -39,6 +39,7 @@ let picking = false;       // picker open?
 let league = null;         // step 1 choice (normal weeks)
 let selected = null;       // club tapped, waiting for Confirm
 let saving = false;
+let roundId = null;        // double header: which of the two open gameweeks is on screen
 let running = null, again = null;   // refresh() in flight / queued
 let teamsStale = false;    // re-load the teams list on the next fetch
 let lastFetch = 0, refetchedFor = null;
@@ -79,13 +80,17 @@ function swatch(t) {
 async function load() {
   const reloadTeams = teamsStale;
   teamsStale = false;
+  const asked = roundId;
   const [st, tm] = await Promise.all([
-    sb.rpc("my_game_state"),
+    sb.rpc("my_game_state", asked ? { p_gameweek_id: asked } : {}),
     teams.length && !reloadTeams ? { data: teams } : sb.from("teams").select("id,name,short_name,league,colour1,colour2,active"),
   ]);
   if (st.error || tm.error || !st.data) throw st.error || tm.error || new Error("No data");
   teams = tm.data;
   state = st.data;
+  // Stay on the gameweek the server showed until the player switches (only matters with two open).
+  // If they tapped the other one while this was loading, keep their choice for the next load.
+  if (roundId === asked) roundId = openRounds().length > 1 && state.gameweek ? state.gameweek.id : null;
   offset = Date.parse(state.now) - Date.now();   // fixes a wrong phone clock
 }
 
@@ -102,10 +107,15 @@ function refresh() {
 async function doRefresh() {
   lastFetch = Date.now();   // set up front so a failed fetch doesn't retry every second
   const couldPick = state && state.can_pick;
+  const wasGw = state && state.gameweek ? state.gameweek.id : null;
   try {
     await load();
     $("#error").textContent = "";
     $("#error").className = "msg error";
+    // A different gameweek is on screen now: drop any half-made choice from the old one
+    if (wasGw !== null && (state.gameweek ? state.gameweek.id : null) !== wasGw) {
+      picking = false; selected = null; league = null;
+    }
     if (couldPick && !state.can_pick && picking) {
       say($("#flash"), "Picks have just locked.", "");
     }
@@ -127,12 +137,36 @@ async function doRefresh() {
 /* ---------- Rendering ---------- */
 
 async function render() {
+  renderRounds();
   renderStatus();
   renderBanner();
   renderCurrent();
   renderPicker();
   renderRun();
   await renderPay();
+}
+
+// Every open gameweek, each with this player's pick and deadline. Two means a double header.
+const openRounds = () => (state && Array.isArray(state.rounds) ? state.rounds : []);
+
+// Double header: a switch between the two open gameweeks, showing what is still to pick
+function renderRounds() {
+  const el = $("#rounds");
+  const rounds = openRounds();
+  el.hidden = !(rounds.length > 1 && state.entry_status === "alive" && state.gameweek);
+  if (el.hidden) { el.innerHTML = ""; return; }
+  const label = (r) => r.mode === "off" ? "Week off"
+    : r.pick_team_id != null ? `${shortName(r.pick_team_id)} ✓`
+    : r.can_pick ? "Pick needed" : "No pick";
+  const todo = rounds.filter((r) => r.can_pick && r.pick_team_id == null).length;
+  el.innerHTML = `
+    <h2>Two gameweeks are open</h2>
+    <p>You need a winning pick in <strong>both</strong> to stay in.${todo ? ` <strong>${todo} still to pick.</strong>` : ""}</p>
+    <div class="chips" role="group" aria-label="Choose a gameweek">
+      ${rounds.map((r) => `<button type="button" class="chip" data-round="${r.id}" aria-pressed="${r.id === state.gameweek.id}">GW${r.number}: ${escapeHtml(label(r))}</button>`).join("")}
+    </div>
+    <p class="muted small">${rounds.map((r) => r.mode === "off" ? `GW${r.number} is a week off`
+      : `GW${r.number} locks ${escapeHtml(fmtDeadline(r.deadline))}`).join(" · ")}</p>`;
 }
 
 function renderStatus() {
@@ -330,6 +364,19 @@ document.addEventListener("visibilitychange", () => {
 
 /* ---------- Picker actions ---------- */
 
+// Double header: show the other open gameweek
+$("#rounds").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-round]");
+  if (!b || saving) return;
+  const id = Number(b.dataset.round);
+  if (id === roundId) return;
+  roundId = id;
+  picking = false; selected = null; league = null;
+  say($("#flash"), "");
+  await refresh();
+  $('#rounds [aria-pressed="true"]')?.focus();
+});
+
 $("#current").addEventListener("click", (e) => {
   if (!e.target.closest("#change")) return;
   picking = true; league = null; selected = null;
@@ -376,7 +423,9 @@ $("#bar-ok").addEventListener("click", async () => {
   $("#bar-ok").textContent = "Saving…";
   let error = null;
   try {
-    ({ error } = await sb.rpc("make_pick", { p_team_id: selected }));
+    // Say which gameweek the pick is for (the one on screen), so it can't land in the other one
+    const forGw = Array.isArray(state.rounds) && state.gameweek ? { p_gameweek_id: state.gameweek.id } : {};
+    ({ error } = await sb.rpc("make_pick", { p_team_id: selected, ...forGw }));
   } catch {
     error = { message: "Couldn't save your pick. Please check your connection and try again." };
   }
@@ -395,7 +444,15 @@ $("#bar-ok").addEventListener("click", async () => {
   picking = false; selected = null; league = null;
   say($("#bar-msg"), "");
   await refresh();
-  say($("#flash"), `Pick saved: ${t.name}. Good luck!`, "ok");
+  // Double header: go straight on to the other gameweek if it still needs a pick
+  const next = openRounds().find((r) => r.can_pick && r.pick_team_id == null && r.id !== roundId);
+  if (next) {
+    roundId = next.id;
+    await refresh();
+    say($("#flash"), `Pick saved: ${t.name}. Now make your pick for GW${next.number}.`, "ok");
+  } else {
+    say($("#flash"), `Pick saved: ${t.name}. Good luck!`, "ok");
+  }
   window.scrollTo({ top: 0, behavior: "smooth" });
 });
 

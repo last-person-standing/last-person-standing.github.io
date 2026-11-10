@@ -34,6 +34,19 @@
 4. **Copy summary** gives you a line like *"64 in, 22 out this week: Blackburn (9), QPR (8)…"* to paste into the group.
 5. Tap **Open next gameweek**. The deadline defaults to next Friday at 5pm.
 
+## Double header (two gameweeks at once)
+For a week where players pick a weekend team **and** another one, such as a Champions League night.
+1. Open the weekend gameweek as normal.
+2. On **This week**, scroll to the bottom and tap **Double header: open a second gameweek**. Choose its type and deadline, then **Open gameweek alongside**.
+   - For a Champions League night choose **Custom** and list the clubs. Foreign clubs can be added with **Add non-league club**.
+3. A switch appears at the top of **This week**. Tap a gameweek to work on it. Each one has its own deadline, picks, overrides and results.
+4. Players see both on **My pick** and need a winning pick in **both** to stay in. A club can still only be used once in the game, so nobody can pick the same club in both.
+5. Confirm each gameweek's results when its matches are over. Lose either one, or miss either pick, and the player is out.
+   - *Undo* works on the gameweek confirmed most recently. To undo both, undo them in reverse order.
+6. When both are confirmed, **Open next gameweek** appears as usual.
+
+The same button lets you open the next gameweek while one match from the current one is still to be played.
+
 ## Ending a game
 When one player is left (or everyone goes out in the same week): Host → **Game** → **End game**.
 - Tick the winner(s) and add a note, e.g. "Split pot".
