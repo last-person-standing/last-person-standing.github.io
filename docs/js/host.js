@@ -94,6 +94,26 @@ function summaryText(inCount, outCount, losing, noPick) {
   if (noPick) parts.push(`No pick (${noPick})`);
   return `${inCount} in, ${outCount} out this week${parts.length ? `: ${parts.join(", ")}` : ""}`;
 }
+
+// The email drafted for the host when a game ends. [date] is for the host to fill in.
+const NEXT_DATE = "[date]";
+function winnerDraft(game, gameweek, winners) {
+  const n = winners.length;
+  const list = n < 3 ? winners.join(" and ") : `${winners.slice(0, -1).join(", ")} and ${winners[n - 1]}`;
+  const named = n === 1 ? `Winner of ${game}: ${list}` : `Winners of ${game}: ${list}`;
+  const subject = !n ? `${game} has finished` : named.length <= 120 ? named : `${game}: we have our winners`;
+  const body = [
+    "Hi {name},",
+    `${game} is over${gameweek ? `: it finished in Gameweek ${gameweek}` : ""}.`,
+    !n ? "Nobody was left standing, so there is no winner this time."
+      : n === 1 ? `The winner is ${list}. Congratulations!`
+      : `The winners are ${list}, who share the prize. Congratulations!`,
+    !n ? "" : n === 1 ? "The prize money will be transferred to the winner's account of choice."
+      : "The prize money will be split and transferred to each winner's account of choice.",
+    `The next game starts on ${NEXT_DATE}.`,
+  ].filter(Boolean).join("\n\n");
+  return { subject, body };
+}
 /* @time-end */
 
 /* ---------- State ---------- */
@@ -110,7 +130,7 @@ const ui = {
   end: { gameId: null, ticks: new Set(), note: "", touched: false },
   startResult: null,
   chase: { init: false, stale: false, enabled: true, slots: [], subject: "", body: "", target: "body", result: null, setup: "" },
-  msg: { audience: "everyone", subject: "", body: "", target: "body", reqId: null, result: null },
+  msg: { audience: "everyone", subject: "", body: "", target: "body", reqId: null, result: null, win: false },   // win = holds the winner announcement draft
   pq: "", pf: "all", cq: "",
   sheet: null,     // { kind: "player" | "club", id }
   opener: null,    // selector of the control that opened the detail panel
@@ -1507,6 +1527,7 @@ function renderMessage() {
 
   el.innerHTML = `
     <h2 id="msg-title">Message players</h2>
+    ${m.win && (m.subject || m.body) ? `<p class="note-warn">Winner announcement, written for you. Change anything you like${m.body.includes(NEXT_DATE) ? `, put the next game's start date in place of ${NEXT_DATE}` : ""}, then send it.</p>` : ""}
     <p class="muted small">Your own email to the group, sent straight away: a round-up, news, anything. It isn't a chase email. Replies come to you at ${escapeHtml(me.email)}.</p>
 
     <fieldset class="msg-aud">
@@ -1558,6 +1579,7 @@ async function sendMessage(btn) {
   const subject = m.subject.trim(), body = m.body.trim();
   if (!subject) return flash("Enter a subject for the email.", "error");
   if (!body) return flash("Enter the message.", "error");
+  if ((subject + body).includes(NEXT_DATE)) return flash(`Put the next game's start date in place of ${NEXT_DATE} (or delete that line), then send.`, "error");
   if (!t.n) return flash("There's nobody to send it to yet.", "error");
   const yes = await ask({
     title: `Email ${plural(t.n, "person", "people")}?`,
@@ -1583,7 +1605,7 @@ async function sendMessage(btn) {
             + (r.failed ? ` ${r.failed} failed${errs.length ? `: ${errs.join("; ")}` : ""}.` : "")
             + (r.stopped ? ` ${r.stopped}` : "") };
       }
-      if (r.already || Number(r.sent) > 0) Object.assign(m, { subject: "", body: "", reqId: null });
+      if (r.already || Number(r.sent) > 0) Object.assign(m, { subject: "", body: "", reqId: null, win: false });
       else m.reqId = null;   // nothing went out, so a fresh send is fine
       return r;
     } catch (e) {
@@ -2042,18 +2064,31 @@ const FORMS = {
     const ids = [...ui.end.ticks];
     const note = ui.end.note.trim();
     const names = ids.map((id) => pname(id));
+    // Written now, while the game's details are still loaded; shown once the game has ended
+    const draft = winnerDraft(D.active.name, Math.max(0, ...D.gws.map((g) => g.number)),
+      ids.map((id) => prof(id)?.display_name || "Unknown player").sort(byName));
+    const unsent = ui.msg.subject.trim() || ui.msg.body.trim();
     const yes = await ask({
       title: "End the game?",
       body: `<p>${ids.length ? `<strong>${plural(ids.length, "winner")}</strong>: ${names.join(", ")}.` : "<strong>No winners selected.</strong>"}</p>
-        <p>This closes ${escapeHtml(D.active.name)}. It can't be undone.</p>`,
+        <p>This closes ${escapeHtml(D.active.name)}. It can't be undone.</p>
+        <p class="muted small">Next you'll get a winner announcement to edit and email to everyone in the game. Nothing is sent until you tap Send.${unsent ? " It replaces the unsent message on the Players tab." : ""}</p>`,
       ok: "End game", danger: true,
     });
     if (!yes) return;
-    await act($("button[type=submit]", f), async () => {
+    const done = await act($("button[type=submit]", f), async () => {
       await rpc("host_end_game", { p_winner_ids: ids, p_note: note || null });
       ui.startResult = null;
       ui.end = { gameId: null, ticks: new Set(), note: "", touched: false };
-    }, "Game ended. You can start a new one whenever you're ready.");
+      Object.assign(ui.msg, { audience: "game", ...draft, target: "body", reqId: null, result: null, win: true });
+    }, "Game ended. The winner announcement is ready to edit and send.");
+    // Take the host straight to the announcement
+    if (done && D.audience) {
+      renderMessage();   // in case the page couldn't refresh after ending the game
+      setTab("players", true);
+      const bar = $(".topbar");   // sticky, so stop just below it
+      window.scrollTo({ top: $("#message").getBoundingClientRect().top + window.scrollY - (bar ? bar.offsetHeight : 0) - 8 });
+    }
   },
 
   club: async (f) => {

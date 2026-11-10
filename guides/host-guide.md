@@ -51,6 +51,9 @@ The same button lets you open the next gameweek while one match from the current
 When one player is left (or everyone goes out in the same week): Host → **Game** → **End game**.
 - Tick the winner(s) and add a note, e.g. "Split pot".
 - The game is saved in **History**, and you can start the next one straight away.
+- You are then taken to a ready-written **winner announcement** under **Message players**: who won, that the prize money will be transferred, and when the next game starts.
+  - Change any of the wording, and put the next game's start date in place of `[date]`. It won't send while `[date]` is still there.
+  - Tap **Send** to email it to everyone in the game. Nothing goes out until you do.
 
 ## Messaging the group
 For anything that isn't a chase, like a weekend round-up, news or a payment reminder: Host → **Players** → **Message players**.
