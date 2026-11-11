@@ -13,3 +13,6 @@ desktop.ini
 
 # Local test tools
 node_modules/
+
+# Demo videos (large files, kept out of the public repo)
+videos/
